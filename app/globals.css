@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: #f5f6f1;
+  color: #17231c;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button, input, textarea { font: inherit; }
+
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  background: #e7ece5;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.station-marker {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 4px solid white;
+  border-radius: 50% 50% 50% 12%;
+  box-shadow: 0 6px 18px rgba(23, 35, 28, .28);
+  transform: rotate(-45deg);
+  transition: transform .15s ease;
+}
+
+.station-marker::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: white;
+  transform: rotate(45deg);
+}
+
+.station-marker:hover { transform: rotate(-45deg) scale(1.1); }
+.marker-green { background: #238a55; }
+.marker-amber { background: #e7a92f; }
+.marker-red { background: #da554a; }
+.marker-gray { background: #7e8b82; }
+
+.leaflet-control-zoom {
+  border: 0 !important;
+  box-shadow: 0 8px 24px rgba(23, 35, 28, .15) !important;
+}
+
+.leaflet-control-zoom a { color: #17231c !important; }

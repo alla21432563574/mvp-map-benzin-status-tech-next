@@ -1,0 +1,46 @@
+export const fuelKeys = ["ai92", "ai95", "diesel", "gas"] as const;
+export type FuelKey = (typeof fuelKeys)[number];
+
+export type MapBounds = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
+export const fuelLabels: Record<FuelKey, string> = {
+  ai92: "АИ-92",
+  ai95: "АИ-95",
+  diesel: "Дизель",
+  gas: "Газ",
+};
+
+export type Station = {
+  id: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  brand: string;
+  ai92: boolean | null;
+  ai95: boolean | null;
+  diesel: boolean | null;
+  gas: boolean | null;
+  updated_at: string;
+  update_source: string;
+};
+
+export type PendingReport = {
+  id: string;
+  station_id: string;
+  ai92: boolean | null;
+  ai95: boolean | null;
+  diesel: boolean | null;
+  gas: boolean | null;
+  reporter_name: string | null;
+  comment: string | null;
+  source: string;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  station?: Pick<Station, "name" | "address" | "brand">;
+};

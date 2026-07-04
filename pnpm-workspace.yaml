@@ -1,0 +1,7 @@
+packages:
+  - "."
+  - "bot"
+
+allowBuilds:
+  esbuild: true
+  sharp: false
