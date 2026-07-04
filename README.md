@@ -69,7 +69,7 @@ ADMIN_SECRET=длинный-случайный-пароль
 
 ## Импорт публичных данных map.benzin-status.tech
 
-Скрипт `scripts/scrape-benzin-status.ts` не запускает браузер. Он делает один прямой HTTP-запрос к публичному REST endpoint `/api/stations`, который использует сама карта. Cookies, токены и авторизация не нужны. CAPTCHA, Cloudflare и rate limits не обходятся; при HTTP 403/429 запуск останавливается.
+Скрипт `scripts/scrape-benzin-status.ts` не запускает браузер. В nationwide-режиме он обходит Россию сеткой bbox-сегментов и делает прямые HTTP-запросы к публичному REST endpoint `/api/stations`. Cookies, токены и авторизация не нужны. CAPTCHA, Cloudflare и rate limits не обходятся; при HTTP 403/429 запуск останавливается.
 
 Перед первым запуском примените `supabase/migrations/20260703_add_benzin_scraper.sql` в Supabase SQL Editor. Миграция добавляет импортные поля станции, таблицу `scrape_logs` и серверную функцию безопасного обновления. Более свежие ручные статусы не перезаписываются.
 
@@ -78,11 +78,15 @@ ADMIN_SECRET=длинный-случайный-пароль
 ```env
 SCRAPER_ENABLED=true
 SCRAPER_INTERVAL_SECONDS=180
-SCRAPER_CITY=Москва
+SCRAPER_MODE=russia
+SCRAPER_CITY=Россия
 SCRAPER_CITY_CENTER_LAT=55.7558
 SCRAPER_CITY_CENTER_LNG=37.6173
+SCRAPER_GRID_STEP_DEGREES=4
 SCRAPER_MAX_STATIONS_PER_RUN=5000
+SCRAPER_REQUEST_DELAY_MS=250
 SCRAPER_BOUNDS=55.40,36.80,56.10,38.40
+SCRAPER_LOCK_SECONDS=3600
 ```
 
 Для записи нужны `SUPABASE_SERVICE_ROLE_KEY` и URL проекта: `SUPABASE_URL` или уже используемый Next.js `NEXT_PUBLIC_SUPABASE_URL`. Service role ключ не передаётся чужому сайту и используется только после закрытия страницы для записи результата в вашу Supabase. Если переменные отсутствуют или содержат шаблонные значения, scraper продолжит автономную работу и выведет предупреждение без попытки подключения к Supabase.
@@ -99,7 +103,7 @@ npm run scrape:benzin
 npm run scrape:benzin:debug
 ```
 
-`SCRAPER_BOUNDS` задаёт область как `latMin,lngMin,latMax,lngMax`. Московская область по умолчанию сейчас возвращает 1535 АЗС одним запросом. Debug-режим сохраняет нормализованный JSON в `outputs/scraper-debug/results.json`. Lock-файл не позволяет двум процессам работать одновременно. Playwright используется только отдельной диагностической командой `pnpm scrape:benzin:audit`.
+`SCRAPER_MODE=russia` обходит территорию 41…82° с.ш. и долготы `19…180` плюс `-180…-169` для Чукотки. Тайл, достигший API-лимита, рекурсивно делится на четыре. `SCRAPER_GRID_STEP_DEGREES` задаёт начальный шаг, `SCRAPER_REQUEST_DELAY_MS` — паузу, а `SCRAPER_MAX_STATIONS_PER_RUN` — лимит одного API-ответа. Дубли удаляются по id, координатам и паре название+адрес. `SCRAPER_MODE=city` сохраняет прежний режим `SCRAPER_BOUNDS`.
 
 Полностью автономная проверка без создания Supabase-клиента и любых запросов к базе:
 
@@ -113,17 +117,14 @@ pnpm scrape:benzin:debug -- --dry-run
 
 ## GitHub Actions: автообновление
 
-Workflow `.github/workflows/scrape.yml` вызывает production endpoint каждые 5 минут. Endpoint `GET /api/cron/scrape` защищён `CRON_SECRET`, использует общий с CLI-scraper модуль и делает массовый upsert одной транзакцией. Каждый запус попадает в `scrape_logs`.
+Workflow `.github/workflows/scrape.yml` каждые 15 минут запускает nationwide CLI-scraper прямо на GitHub Runner. Интервал выбран так, чтобы полный обход успевал завершиться и не создавал постоянную нагрузку на публичный сайт. Vercel Function в длинном обходе не участвует; защищённый endpoint `GET /api/cron/scrape` остаётся для ручного регионального запуска.
 
-После первого production-деплоя:
+Откройте GitHub Repository → Settings → Secrets and variables → Actions и добавьте:
 
-1. Скопируйте production URL из Vercel Project → Deployments или Settings → Domains, например `https://fuel-map.vercel.app`.
-2. Откройте GitHub Repository → Settings → Secrets and variables → Actions.
-3. Добавьте repository secret `CRON_SECRET` — точно тот же секрет, что задан в Vercel.
-4. Добавьте repository secret `VERCEL_PROJECT_URL` — production URL с `https://` или без него.
-5. Во вкладке GitHub Actions откройте workflow **Update fuel stations** и нажмите **Run workflow** для ручной проверки.
+- `SUPABASE_URL` — production URL проекта Supabase;
+- `SUPABASE_SERVICE_ROLE_KEY` — service-role ключ.
 
-Workflow завершается с ошибкой при любом HTTP-статусе, отличном от 200. GitHub-level `concurrency` не запускает два workflow одновременно, а Supabase-lock в endpoint остаётся вторым уровнем защиты.
+Для ручного запуска откройте GitHub Actions → **Update fuel stations across Russia** → **Run workflow**. GitHub-level `concurrency` не запускает два workflow одновременно, а распределённый Supabase-lock не даёт пересечься GitHub-, CLI- и endpoint-запускам.
 
 Перед стартом endpoint атомарно захватывает распределённую блокировку в Supabase. Если предыдущий запус ещё идёт, новый не начинается и получает:
 
@@ -132,7 +133,7 @@ HTTP 409
 {"error":"Scraper already running"}
 ```
 
-Блокировка имеет lease-срок `SCRAPER_LOCK_SECONDS=600`, поэтому аварийно завершённая serverless-функция не блокирует импорт навсегда.
+Для nationwide-запуска lease-срок задан как `SCRAPER_LOCK_SECONDS=3600`, поэтому аварийно завершённый runner не блокирует импорт навсегда.
 
 Перед каждым cron-запуском функция `cleanup_scrape_logs` удаляет записи старше `SCRAPE_LOG_RETENTION_DAYS=30`. Допустимый срок хранения — от 1 до 365 дней; число удалённых строк возвращается в `deletedLogs`.
 

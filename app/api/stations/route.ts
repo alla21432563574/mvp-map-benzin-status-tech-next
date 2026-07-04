@@ -5,7 +5,7 @@ import { createPublicClient } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
 const RANGE_SIZE = 1_000;
-const MAX_STATIONS = 10_000;
+const MAX_STATIONS = 100_000;
 
 function parsePositiveInteger(value: string | null, fallback: number) {
   const parsed = Number(value);
@@ -16,8 +16,16 @@ function parseBbox(value: string | null) {
   if (!value) return null;
   const [west, south, east, north, ...rest] = value.split(",").map(Number);
   if (rest.length || [west, south, east, north].some((coordinate) => !Number.isFinite(coordinate))) return undefined;
-  if (west >= east || south >= north || west < -180 || east > 180 || south < -90 || north > 90) return undefined;
-  return { west, south, east, north };
+  const span = east - west;
+  if (span <= 0 || south >= north || south < -90 || north > 90) return undefined;
+  const wrap = (longitude: number) => ((longitude + 180) % 360 + 360) % 360 - 180;
+  if (span >= 360) return { west, south, east, north, longitudeRanges: [{ west: -180, east: 180 }] };
+  const normalizedWest = wrap(west);
+  const normalizedEast = wrap(east);
+  const longitudeRanges = normalizedWest < normalizedEast
+    ? [{ west: normalizedWest, east: normalizedEast }]
+    : [{ west: normalizedWest, east: 180 }, { west: -180, east: normalizedEast }];
+  return { west, south, east, north, longitudeRanges };
 }
 
 export async function GET(request: Request) {
@@ -34,41 +42,42 @@ export async function GET(request: Request) {
   const requestedLimit = Math.min(RANGE_SIZE, parsePositiveInteger(searchParams.get("limit"), RANGE_SIZE));
   const startedAt = performance.now();
 
-  const createQuery = () => {
+  const createQuery = (range?: { west: number; east: number }) => {
     let query = supabase.from("stations").select("*");
     if (bbox) {
       query = query
-        .gte("longitude", bbox.west)
-        .lte("longitude", bbox.east)
+        .gte("longitude", range!.west)
+        .lte("longitude", range!.east)
         .gte("latitude", bbox.south)
         .lte("latitude", bbox.north);
     }
     return query.order("name").order("id");
   };
 
-  if (requestedPage !== null) {
-    const from = (requestedPage - 1) * requestedLimit;
-    const { data, error } = await createQuery().range(from, from + requestedLimit - 1);
-    if (error) return NextResponse.json({ error: "Не удалось загрузить АЗС" }, { status: 500 });
-    return NextResponse.json({
-      stations: data,
-      pagination: { page: requestedPage, limit: requestedLimit, returned: data.length, hasMore: data.length === requestedLimit },
-      elapsedMs: Math.round(performance.now() - startedAt),
-    });
+  const ranges = bbox?.longitudeRanges || [undefined];
+  const stationMap = new Map<string, Record<string, unknown>>();
+  let truncated = false;
+  for (const range of ranges) {
+    for (let from = 0; from < MAX_STATIONS; from += RANGE_SIZE) {
+      const { data, error } = await createQuery(range).range(from, from + RANGE_SIZE - 1);
+      if (error) return NextResponse.json({ error: "Не удалось загрузить АЗС" }, { status: 500 });
+      for (const station of data) stationMap.set(String(station.id), station);
+      if (data.length < RANGE_SIZE) break;
+      if (from + RANGE_SIZE >= MAX_STATIONS) truncated = true;
+    }
   }
-
-  const stations = [];
-  for (let from = 0; from < MAX_STATIONS; from += RANGE_SIZE) {
-    const { data, error } = await createQuery().range(from, from + RANGE_SIZE - 1);
-    if (error) return NextResponse.json({ error: "Не удалось загрузить АЗС" }, { status: 500 });
-    stations.push(...data);
-    if (data.length < RANGE_SIZE) break;
-  }
+  const allStations = [...stationMap.values()].sort((left, right) =>
+    String(left.name || "").localeCompare(String(right.name || ""), "ru") || String(left.id).localeCompare(String(right.id)),
+  );
+  const pageStart = requestedPage === null ? 0 : (requestedPage - 1) * requestedLimit;
+  const stations = requestedPage === null ? allStations : allStations.slice(pageStart, pageStart + requestedLimit);
 
   return NextResponse.json({
     stations,
     bbox,
-    pagination: { returned: stations.length, truncated: stations.length >= MAX_STATIONS },
+    pagination: requestedPage === null
+      ? { returned: stations.length, truncated }
+      : { page: requestedPage, limit: requestedLimit, returned: stations.length, hasMore: pageStart + stations.length < allStations.length },
     elapsedMs: Math.round(performance.now() - startedAt),
   });
 }

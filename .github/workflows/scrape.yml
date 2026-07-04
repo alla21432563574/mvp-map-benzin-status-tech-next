@@ -1,52 +1,48 @@
-name: Update fuel stations
+name: Update fuel stations across Russia
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: benzin-status-scraper
+  group: benzin-status-russia-scraper
   cancel-in-progress: false
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 45
     steps:
-      - name: Call protected scraper endpoint
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Scrape all of Russia
+        run: pnpm scrape:benzin -- --once
         env:
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          VERCEL_PROJECT_URL: ${{ secrets.VERCEL_PROJECT_URL }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${CRON_SECRET}" || -z "${VERCEL_PROJECT_URL}" ]]; then
-            echo "CRON_SECRET and VERCEL_PROJECT_URL secrets are required."
-            exit 1
-          fi
-
-          base_url="${VERCEL_PROJECT_URL%/}"
-          if [[ "${base_url}" != http://* && "${base_url}" != https://* ]]; then
-            base_url="https://${base_url}"
-          fi
-
-          response_file="$(mktemp)"
-          http_status="$(curl --silent --show-error \
-            --max-time 55 \
-            --output "${response_file}" \
-            --write-out "%{http_code}" \
-            --header "Authorization: Bearer ${CRON_SECRET}" \
-            "${base_url}/api/cron/scrape")"
-
-          cat "${response_file}"
-          echo
-
-          if [[ "${http_status}" != "200" ]]; then
-            echo "Scraper endpoint returned HTTP ${http_status}."
-            exit 1
-          fi
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SCRAPER_ENABLED: "true"
+          SCRAPER_MODE: russia
+          SCRAPER_CITY: Россия
+          SCRAPER_GRID_STEP_DEGREES: "4"
+          SCRAPER_MAX_STATIONS_PER_RUN: "5000"
+          SCRAPER_REQUEST_DELAY_MS: "250"
+          SCRAPER_LOCK_SECONDS: "3600"

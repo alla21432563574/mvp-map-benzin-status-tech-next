@@ -1,4 +1,5 @@
 import { mkdir, open, readFile, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
@@ -18,11 +19,15 @@ const config = {
   debug: process.argv.includes("--debug"),
   once: process.argv.includes("--once") || process.argv.includes("--debug"),
   intervalSeconds: Math.max(60, Number(process.env.SCRAPER_INTERVAL_SECONDS || 180)),
+  mode: process.env.SCRAPER_MODE === "russia" ? "russia" as const : "city" as const,
   latitude: Number(process.env.SCRAPER_CITY_CENTER_LAT || 55.7558),
   longitude: Number(process.env.SCRAPER_CITY_CENTER_LNG || 37.6173),
   city: process.env.SCRAPER_CITY || "Москва",
   maxStations: Math.min(5_000, Math.max(1, Number(process.env.SCRAPER_MAX_STATIONS_PER_RUN || 5_000))),
   bounds: process.env.SCRAPER_BOUNDS || "55.40,36.80,56.10,38.40",
+  gridStepDegrees: Math.max(0.5, Math.min(10, Number(process.env.SCRAPER_GRID_STEP_DEGREES || 4))),
+  requestDelayMs: Math.max(100, Math.min(5_000, Number(process.env.SCRAPER_REQUEST_DELAY_MS || 250))),
+  lockSeconds: Math.max(600, Math.min(3_600, Number(process.env.SCRAPER_LOCK_SECONDS || 3_600))),
   supabaseUrl: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
   serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
 };
@@ -33,6 +38,15 @@ process.once("SIGTERM", () => { shuttingDown = true; });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function describeError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const details = error as { message?: string; code?: string; details?: string; hint?: string };
+    return [details.code, details.message, details.details, details.hint].filter(Boolean).join(": ") || JSON.stringify(error);
+  }
+  return String(error);
+}
+
 function parseBounds() {
   const bounds = config.bounds.split(",").map(Number);
   if (bounds.length !== 4 || bounds.some((value) => !Number.isFinite(value))) {
@@ -42,7 +56,7 @@ function parseBounds() {
 }
 
 function assertConfig() {
-  parseBounds();
+  if (config.mode === "city") parseBounds();
   if (!Number.isFinite(config.latitude) || !Number.isFinite(config.longitude)) {
     throw new Error("Некорректные координаты SCRAPER_CITY_CENTER_LAT/LNG");
   }
@@ -96,10 +110,16 @@ async function releaseLock(handle: FileHandle | null) {
 async function fetchStations(): Promise<BenzinScrapeResult> {
   return fetchBenzinStations({
     bounds: config.bounds,
+    mode: config.mode,
     maxStations: config.maxStations,
     latitude: config.latitude,
     longitude: config.longitude,
     city: config.city,
+    gridStepDegrees: config.gridStepDegrees,
+    requestDelayMs: config.requestDelayMs,
+    onProgress: ({ requests, tiles, stations, duplicates }) => {
+      console.log(`Прогресс: запросов ${requests}, тайлов ${tiles}, АЗС ${stations}, дублей ${duplicates}.`);
+    },
   });
 }
 
@@ -119,20 +139,31 @@ async function finishLog(supabase: SupabaseClient, id: string, status: "success"
 }
 
 async function importStations(supabase: SupabaseClient, stations: ScrapedStation[], stats: RunStats) {
-  for (const station of stations) {
-    const { data, error } = await supabase.rpc("upsert_scraped_station", {
-      p_city: station.city, p_name: station.name, p_address: station.address,
-      p_latitude: station.latitude, p_longitude: station.longitude, p_brand: station.brand,
-      p_ai92: station.ai92, p_ai95: station.ai95, p_diesel: station.diesel, p_gas: station.gas,
-      p_has_queue: station.hasQueue, p_external_source: station.externalSource,
-      p_external_key: station.externalKey, p_source_updated_at: station.sourceUpdatedAt,
-      p_imported_at: station.importedAt,
-    });
-    if (error) throw error;
-    const action = Array.isArray(data) ? data[0]?.action : data?.action;
-    if (action === "created") stats.created += 1;
-    else if (action === "updated") stats.updated += 1;
-    else stats.skipped += 1;
+  const batchSize = 100;
+  for (let offset = 0; offset < stations.length; offset += batchSize) {
+    const batch = stations.slice(offset, offset + batchSize).map(({ rawText: _rawText, ...station }) => station);
+    let data: unknown = null;
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const response = await supabase.rpc("bulk_upsert_scraped_stations", { p_stations: batch });
+      if (!response.error) {
+        data = response.data;
+        lastError = null;
+        break;
+      }
+      lastError = response.error;
+      if (attempt < 3) {
+        const delay = 1_000 * 2 ** (attempt - 1);
+        console.warn(`Supabase batch ${offset + 1}-${offset + batch.length}: ${describeError(lastError)}; retry ${attempt + 1}/3 через ${delay} мс.`);
+        await sleep(delay);
+      }
+    }
+    if (lastError) throw new Error(`Supabase batch ${offset + 1}-${offset + batch.length}: ${describeError(lastError)}`);
+    const batchStats = Array.isArray(data) ? data[0] : data;
+    stats.created += Number(batchStats?.created_count || 0);
+    stats.updated += Number(batchStats?.updated_count || 0);
+    stats.skipped += Number(batchStats?.skipped_count || 0);
+    console.log(`Supabase upsert: ${Math.min(offset + batchSize, stations.length)}/${stations.length}.`);
   }
 }
 
@@ -151,15 +182,25 @@ async function runOnce() {
   }
 
   let logId: string | null = null;
+  let distributedLockToken: string | null = null;
   try {
     if (supabase) {
-      try {
-        logId = await createLog(supabase);
-      } catch (error) {
-        const message = error instanceof Error && error.message ? error.message : "Supabase отклонил запрос или таблица scrape_logs ещё не создана";
-        console.warn(`Supabase недоступен, результаты не будут сохранены: ${message}`);
-        supabase = null;
+      const token = randomUUID();
+      const { data: acquired, error: lockError } = await supabase.rpc("try_acquire_scrape_lock", {
+        p_source: SOURCE, p_token: token, p_lease_seconds: config.lockSeconds,
+      });
+      if (lockError) throw lockError;
+      if (!acquired) {
+        const skippedAt = new Date().toISOString();
+        await supabase.from("scrape_logs").insert({
+          source: SOURCE, status: "skipped", started_at: skippedAt, finished_at: skippedAt,
+          error_message: "Scraper already running",
+        });
+        console.log("Scraper already running.");
+        return;
       }
+      distributedLockToken = token;
+      logId = await createLog(supabase);
     }
 
     if (config.debug || config.dryRun) await mkdir(DEBUG_DIR, { recursive: true });
@@ -179,15 +220,22 @@ async function runOnce() {
       (total, station) => total + [station.ai92, station.ai95, station.diesel, station.gas].filter((value) => value !== null).length,
       0,
     );
-    console.log(`Метрики: источник direct-rest; HTTP ${result.httpStatus}; АЗС найдено ${result.stations.length}; записей собрано ${result.stations.length}; дублей отброшено ${result.duplicatesDiscarded}; статусов топлива извлечено ${fuelStatuses}.`);
+    console.log(`Метрики: режим ${config.mode}; HTTP ${result.httpStatus}; запросов ${result.requestCount}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
     if (supabase && logId) await finishLog(supabase, logId, "success", stats);
     console.log(`Готово: найдено ${stats.found}, создано ${stats.created}, обновлено ${stats.updated}, пропущено ${stats.skipped}.`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeError(error);
     if (supabase && logId) await finishLog(supabase, logId, "failed", stats, message);
     console.error("Scraping завершился с ошибкой:", message);
     if (config.once) process.exitCode = 1;
   } finally {
+    if (supabase && distributedLockToken) {
+      try {
+        await supabase.rpc("release_scrape_lock", { p_source: SOURCE, p_token: distributedLockToken });
+      } catch {
+        // Lease истечёт автоматически, даже если сеть не дала освободить lock.
+      }
+    }
     await releaseLock(lock);
   }
 }

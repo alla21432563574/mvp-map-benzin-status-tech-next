@@ -61,7 +61,7 @@ function BoundsWatcher({ onChange }: { onChange: (bounds: MapBounds) => void }) 
 export default function MapView({ stations, selectedId, onSelect, onBoundsChange }: Props) {
   const selected = stations.find((station) => station.id === selectedId);
   return (
-    <MapContainer center={[55.7558, 37.6173]} zoom={11} zoomControl={true} className="h-full w-full">
+    <MapContainer center={[61, 90]} zoom={3} zoomControl={true} className="h-full w-full">
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
