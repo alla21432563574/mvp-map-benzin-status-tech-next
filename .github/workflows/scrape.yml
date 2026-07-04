@@ -1,0 +1,52 @@
+name: Update fuel stations
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benzin-status-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call protected scraper endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          VERCEL_PROJECT_URL: ${{ secrets.VERCEL_PROJECT_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${CRON_SECRET}" || -z "${VERCEL_PROJECT_URL}" ]]; then
+            echo "CRON_SECRET and VERCEL_PROJECT_URL secrets are required."
+            exit 1
+          fi
+
+          base_url="${VERCEL_PROJECT_URL%/}"
+          if [[ "${base_url}" != http://* && "${base_url}" != https://* ]]; then
+            base_url="https://${base_url}"
+          fi
+
+          response_file="$(mktemp)"
+          http_status="$(curl --silent --show-error \
+            --max-time 55 \
+            --output "${response_file}" \
+            --write-out "%{http_code}" \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            "${base_url}/api/cron/scrape")"
+
+          cat "${response_file}"
+          echo
+
+          if [[ "${http_status}" != "200" ]]; then
+            echo "Scraper endpoint returned HTTP ${http_status}."
+            exit 1
+          fi

@@ -55,9 +55,9 @@ ADMIN_SECRET=длинный-случайный-пароль
 2. Добавьте переменные `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_SECRET` и `CRON_SECRET` в Project Settings → Environment Variables.
 3. Добавьте scraper-переменные из `.env.example`. `SUPABASE_DB_URL` в Vercel Function не нужен.
 4. Примените `supabase/migrations/20260704_add_cron_scraper.sql`.
-5. Запустите Deploy. Vercel прочитает `vercel.json` и создаст cron раз в 5 минут.
+5. Запустите Deploy. `vercel.json` не содержит cron-задач, поэтому деплой совместим с Hobby-тарифом Vercel.
 
-`CRON_SECRET` должен быть отдельным длинным случайным значением. Vercel Cron автоматически передаёт его как `Authorization: Bearer <CRON_SECRET>`.
+`CRON_SECRET` должен быть отдельным длинным случайным значением. Одно и то же значение нужно добавить в Vercel и GitHub Actions.
 
 ## Структура данных
 
@@ -111,9 +111,19 @@ pnpm scrape:benzin:debug -- --dry-run
 
 Результат проверяется в таблицах `stations` и `scrape_logs`. Для импортированных станций `external_source` равен `benzin-status`, а `imported_at` показывает время последнего просмотра карты. Остановить модуль полностью можно значением `SCRAPER_ENABLED=false`.
 
-## Vercel Cron
+## GitHub Actions: автообновление
 
-Endpoint `GET /api/cron/scrape` защищён `CRON_SECRET`. Он загружает данные тем же общим модулем, что и CLI-scraper, и делает массовый upsert одной транзакцией. Каждый запус попадает в `scrape_logs`.
+Workflow `.github/workflows/scrape.yml` вызывает production endpoint каждые 5 минут. Endpoint `GET /api/cron/scrape` защищён `CRON_SECRET`, использует общий с CLI-scraper модуль и делает массовый upsert одной транзакцией. Каждый запус попадает в `scrape_logs`.
+
+После первого production-деплоя:
+
+1. Скопируйте production URL из Vercel Project → Deployments или Settings → Domains, например `https://fuel-map.vercel.app`.
+2. Откройте GitHub Repository → Settings → Secrets and variables → Actions.
+3. Добавьте repository secret `CRON_SECRET` — точно тот же секрет, что задан в Vercel.
+4. Добавьте repository secret `VERCEL_PROJECT_URL` — production URL с `https://` или без него.
+5. Во вкладке GitHub Actions откройте workflow **Update fuel stations** и нажмите **Run workflow** для ручной проверки.
+
+Workflow завершается с ошибкой при любом HTTP-статусе, отличном от 200. GitHub-level `concurrency` не запускает два workflow одновременно, а Supabase-lock в endpoint остаётся вторым уровнем защиты.
 
 Перед стартом endpoint атомарно захватывает распределённую блокировку в Supabase. Если предыдущий запус ещё идёт, новый не начинается и получает:
 
