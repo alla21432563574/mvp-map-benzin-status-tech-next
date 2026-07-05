@@ -64,8 +64,20 @@ export type StationDisplayStatus = {
   label: string;
 };
 
+const stationLevelStatusLabels: Record<StationStatusKind, string> = {
+  available: "Есть топливо",
+  partial: "Частично",
+  unavailable: "Нет топлива",
+  unknown: "Нет данных",
+};
+
 export function stationDisplayStatus(station: Station, selectedFuels: ReadonlySet<FilterFuelKey> = new Set()): StationDisplayStatus {
   const selected = [...selectedFuels];
+  const latestReportStatus = station.latest_report_status;
+  if (!selected.length && latestReportStatus && latestReportStatus !== "unknown") {
+    return { kind: latestReportStatus, label: stationLevelStatusLabels[latestReportStatus] };
+  }
+
   if (selected.length === 1) {
     const fuel = selected[0];
     const value = station[fuel];

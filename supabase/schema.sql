@@ -235,6 +235,18 @@ alter table public.station_reports enable row level security;
 create policy "Public station reports are readable" on public.station_reports for select using (true);
 grant select on table public.station_reports to anon, authenticated;
 
+create or replace view public.latest_station_reports as
+select distinct on (station_id)
+  station_id,
+  status,
+  created_at,
+  source
+from public.station_reports
+where is_counted is distinct from false
+order by station_id, created_at desc;
+
+grant select on public.latest_station_reports to anon, authenticated, service_role;
+
 create table if not exists public.station_report_sync (
   source text not null,
   station_external_key text not null,

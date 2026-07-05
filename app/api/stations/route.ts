@@ -8,6 +8,13 @@ const RANGE_SIZE = 1_000;
 const MAX_STATIONS = 100_000;
 const MAX_VIEWPORT_STATIONS = 2_000;
 
+type StationRow = Record<string, unknown> & { id: string };
+type LatestReportRow = {
+  station_id: string;
+  status: "available" | "partial" | "unavailable" | "unknown";
+  created_at: string;
+};
+
 function parsePositiveInteger(value: string | null, fallback: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -27,6 +34,29 @@ function parseBbox(value: string | null) {
     ? [{ west: normalizedWest, east: normalizedEast }]
     : [{ west: normalizedWest, east: 180 }, { west: -180, east: normalizedEast }];
   return { west, south, east, north, longitudeRanges };
+}
+
+async function withLatestReportStatus(
+  supabase: NonNullable<ReturnType<typeof createPublicClient>>,
+  stations: StationRow[],
+) {
+  if (!stations.length) return stations;
+  const stationIds = stations.map((station) => station.id).filter(Boolean);
+  const { data, error } = await supabase
+    .from("latest_station_reports")
+    .select("station_id,status,created_at")
+    .in("station_id", stationIds);
+
+  if (error || !data) return stations;
+
+  const latestByStation = new Map<string, LatestReportRow>();
+  for (const report of data as LatestReportRow[]) latestByStation.set(report.station_id, report);
+  return stations.map((station) => {
+    const latest = latestByStation.get(station.id);
+    return latest
+      ? { ...station, latest_report_status: latest.status, latest_report_at: latest.created_at }
+      : { ...station, latest_report_status: null, latest_report_at: null };
+  });
 }
 
 export async function GET(request: Request) {
@@ -73,8 +103,9 @@ export async function GET(request: Request) {
     const stations = [...stationMap.values()]
       .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru") || String(left.id).localeCompare(String(right.id)))
       .slice(0, requestedLimit);
+    const enrichedStations = await withLatestReportStatus(supabase, stations as StationRow[]);
     return NextResponse.json({
-      stations,
+      stations: enrichedStations,
       bbox,
       pagination: { returned: stations.length, total, truncated: stations.length < total },
       elapsedMs: Math.round(performance.now() - startedAt),
@@ -96,9 +127,10 @@ export async function GET(request: Request) {
   const pageStart = requestedPage === null ? 0 : (requestedPage - 1) * requestedLimit;
   const stations = requestedPage === null ? allStations : allStations.slice(pageStart, pageStart + requestedLimit);
   total = allStations.length;
+  const enrichedStations = await withLatestReportStatus(supabase, stations as StationRow[]);
 
   return NextResponse.json({
-    stations,
+    stations: enrichedStations,
     bbox,
     pagination: requestedPage === null
       ? { returned: stations.length, total, truncated }

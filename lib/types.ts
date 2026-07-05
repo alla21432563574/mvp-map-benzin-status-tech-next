@@ -43,6 +43,8 @@ export type Station = {
   gas: boolean | null;
   has_queue?: boolean | null;
   queue_count?: number | null;
+  latest_report_status?: "available" | "partial" | "unavailable" | "unknown" | null;
+  latest_report_at?: string | null;
   updated_at: string;
   update_source: string;
 };
