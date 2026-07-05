@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Clock3, Flag, MapPin, Navigation, Share2, Star, Users } from "lucide-react";
+import { ArrowLeft, Clock3, Flag, MapPin, Navigation, Share2, Star } from "lucide-react";
 import { brandInitials, formatDistance, relativeTime, stationDisplayStatus, type StationStatusKind } from "@/lib/map-utils";
 import { filterFuelKeys, filterFuelLabels, type Station, type StationDetails } from "@/lib/types";
 
@@ -28,6 +28,7 @@ export default function StationCard({ station, details, detailsLoading, distance
   const routeUrl = `https://yandex.ru/maps/?rtext=~${station.latitude},${station.longitude}&rtt=auto`;
   const overall = stationDisplayStatus(station);
   const overallStyle = statusStyles[overall.kind];
+  const hasEnoughConfirmations = (details?.confirmation_count ?? 0) > 1;
 
   return (
     <section className="station-detail flex h-full min-h-0 flex-col bg-[#fbfcf9] dark:bg-[#121b16]">
@@ -49,15 +50,15 @@ export default function StationCard({ station, details, detailsLoading, distance
         </div>
 
         <div className="mt-3 rounded-2xl border border-ink/[.07] bg-white p-4 dark:border-white/[.07] dark:bg-[#19241e]">
-          <div className="flex items-end justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.14em] text-ink/40 dark:text-white/40">Уверенность</p><p className="mt-1 text-2xl font-black">{detailsLoading ? "—" : `${details?.confidence ?? 0}%`}</p></div>{detailsLoading && <span className="h-7 w-14 animate-pulse rounded-lg bg-ink/5 dark:bg-white/5" />}</div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-ink/[.07] dark:bg-white/[.07]"><i className="block h-full rounded-full bg-gradient-to-r from-amber-400 via-lime to-emerald-500 transition-[width] duration-700" style={{ width: `${details?.confidence ?? 0}%` }} /></div>
-          <p className="mt-2 text-[10px] leading-relaxed text-ink/40 dark:text-white/40">Рассчитано по свежести, количеству и согласованности подтверждений.</p>
+          <div className="flex items-end justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.14em] text-ink/40 dark:text-white/40">Уверенность</p><p className={`${hasEnoughConfirmations ? "text-2xl" : "text-sm text-amber-700 dark:text-amber-300"} mt-1 font-black`}>{detailsLoading ? "—" : !details ? "Нет данных" : hasEnoughConfirmations ? `${details.confidence}%` : "Недостаточно подтверждений"}</p></div>{detailsLoading && <span className="h-7 w-14 animate-pulse rounded-lg bg-ink/5 dark:bg-white/5" />}</div>
+          {hasEnoughConfirmations && <div className="mt-3 h-2 overflow-hidden rounded-full bg-ink/[.07] dark:bg-white/[.07]"><i className="block h-full rounded-full bg-gradient-to-r from-amber-400 via-lime to-emerald-500 transition-[width] duration-700" style={{ width: `${details?.confidence ?? 0}%` }} /></div>}
+          <p className="mt-2 text-[10px] leading-relaxed text-ink/40 dark:text-white/40">{detailsLoading ? "Загружаем данные об уверенности…" : !details ? "Не удалось получить данные для расчёта." : hasEnoughConfirmations ? "Рассчитано по свежести, количеству и согласованности подтверждений." : "Числовая оценка появится после нескольких независимых подтверждений."}</p>
         </div>
 
         <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-xl bg-cream p-3 dark:bg-white/5"><dt className="text-ink/40 dark:text-white/40">Последнее подтверждение</dt><dd className="mt-1 font-bold">{relativeTime(details?.last_confirmation_at || station.updated_at, now)}</dd></div>
+          <div className="rounded-xl bg-cream p-3 dark:bg-white/5"><dt className="text-ink/40 dark:text-white/40">{(details?.confirmation_count ?? 0) > 0 ? "Последнее подтверждение" : "Последнее обновление"}</dt><dd className="mt-1 font-bold">{relativeTime(details?.last_confirmation_at || station.updated_at, now)}</dd></div>
           <div className="rounded-xl bg-cream p-3 dark:bg-white/5"><dt className="text-ink/40 dark:text-white/40">Источник</dt><dd className="mt-1 truncate font-bold">{details?.source || station.update_source}</dd></div>
-          <div className="col-span-2 flex items-center justify-between rounded-xl bg-cream p-3 dark:bg-white/5"><dt className="flex items-center gap-1.5 text-ink/40 dark:text-white/40"><Users size={13} />Количество подтверждений</dt><dd className="font-black">{detailsLoading ? "—" : details?.confirmation_count ?? 1}</dd></div>
+          {(details?.confirmation_count ?? 0) > 1 && <div className="col-span-2 flex items-center justify-between rounded-xl bg-cream p-3 dark:bg-white/5"><dt className="text-ink/40 dark:text-white/40">Количество подтверждений</dt><dd className="font-black">{details?.confirmation_count}</dd></div>}
         </dl>
 
         <div className="mt-5"><h3 className="text-sm font-black">Топливо</h3><div className="mt-2 grid grid-cols-2 gap-2">{filterFuelKeys.map((fuel) => {

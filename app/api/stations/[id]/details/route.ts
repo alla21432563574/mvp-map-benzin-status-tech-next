@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient, createPublicClient } from "@/lib/supabase";
+import { calculateStationConfidence, type RankingSignal } from "@/lib/smart-ranking";
 import type { Station, StationDetails, StationHistoryEntry } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -29,47 +30,38 @@ function snapshotStatus(snapshot: FuelSnapshot): Pick<StationHistoryEntry, "stat
   return { status: "partial", label: "Частично" };
 }
 
-function freshnessScore(value: string) {
-  const ageHours = Math.max(0, (Date.now() - new Date(value).getTime()) / 3_600_000);
-  if (ageHours <= 0.25) return 1;
-  if (ageHours <= 1) return 0.94;
-  if (ageHours <= 6) return 0.85;
-  if (ageHours <= 24) return 0.7;
-  if (ageHours <= 72) return 0.45;
-  return 0.2;
-}
-
 function buildDetails(station: Station, reports: ReportRow[], totalReports: number): StationDetails {
   const current = snapshotStatus(station);
   const reportHistory: StationHistoryEntry[] = reports.map((report) => {
     const status = snapshotStatus({ ...report, ai98: null, ai100: null });
     return { id: report.id, ...status, confirmed_at: report.moderated_at || report.created_at, source: report.source };
   });
-  const history: StationHistoryEntry[] = [
-    { id: `current-${station.id}`, ...current, confirmed_at: station.updated_at, source: station.update_source },
-    ...reportHistory,
-  ].sort((left, right) => new Date(right.confirmed_at).getTime() - new Date(left.confirmed_at).getTime()).slice(0, 8);
+  const history = reportHistory
+    .sort((left, right) => new Date(right.confirmed_at).getTime() - new Date(left.confirmed_at).getTime())
+    .slice(0, 8);
 
-  const confirmationCount = Math.max(1, totalReports + 1);
+  const confirmationCount = totalReports;
   const confirmerKeys = new Set(reports.map((report) => report.telegram_user_id ? `telegram:${report.telegram_user_id}` : report.reporter_name ? `name:${report.reporter_name.toLocaleLowerCase("ru")}` : `source:${report.source}`));
-  const uniqueConfirmers = Math.max(1, confirmerKeys.size);
-  const comparable = reportHistory.length ? reportHistory : history;
-  const matching = comparable.filter((entry) => entry.status === current.status).length;
-  const factors = {
-    freshness: freshnessScore(station.updated_at),
-    confirmations: Math.min(1, Math.log2(confirmationCount + 1) / Math.log2(16)),
-    consistency: comparable.length > 1 ? matching / comparable.length : 0.55,
-    confirmers: Math.min(1, uniqueConfirmers / 5),
-    coverage: [station.ai92, station.ai95, station.ai98, station.ai100, station.diesel, station.gas].filter((value) => typeof value === "boolean").length / 6,
+  const uniqueConfirmers = confirmerKeys.size;
+  const matching = reportHistory.filter((entry) => entry.status === current.status).length;
+  const signal: RankingSignal | undefined = confirmationCount ? {
+    confirmationCount,
+    uniqueConfirmers,
+    consistency: reportHistory.length > 1 ? matching / reportHistory.length : 0.5,
+    lastConfirmationAt: history[0]?.confirmed_at || null,
+  } : undefined;
+  const { confidence, factors } = calculateStationConfidence(station, signal, Date.now());
+  const latest = history[0] || {
+    confirmed_at: station.updated_at,
+    source: station.update_source,
   };
-  const confidence = Math.round(100 * (factors.freshness * 0.45 + factors.confirmations * 0.2 + factors.consistency * 0.2 + factors.confirmers * 0.1 + factors.coverage * 0.05));
 
   return {
-    confidence: Math.max(1, Math.min(100, confidence)),
+    confidence,
     confirmation_count: confirmationCount,
     unique_confirmers: uniqueConfirmers,
-    last_confirmation_at: history[0]?.confirmed_at || station.updated_at,
-    source: history[0]?.source || station.update_source,
+    last_confirmation_at: latest.confirmed_at,
+    source: latest.source,
     history,
     factors,
   };

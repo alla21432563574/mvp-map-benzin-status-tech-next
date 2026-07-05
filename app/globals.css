@@ -88,6 +88,17 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .station-cluster:hover { transform: scale(1.08); }
 .dark .leaflet-tile-pane { filter: brightness(.72) saturate(.78) hue-rotate(8deg); }
 .dark .leaflet-control-zoom a { border-color: rgba(255,255,255,.08) !important; background: #19241e !important; color: white !important; }
+.leaflet-control-attribution {
+  margin: 0 4px 4px 0 !important;
+  padding: 2px 6px !important;
+  border-radius: 8px !important;
+  background: rgba(255,255,255,.82) !important;
+  box-shadow: 0 2px 10px rgba(23,35,28,.08);
+  font-size: 9px !important;
+  line-height: 1.35 !important;
+  backdrop-filter: blur(8px);
+}
+
 .dark .leaflet-control-attribution { background: rgba(18,27,22,.82) !important; color: rgba(255,255,255,.55); }
 .dark .leaflet-control-attribution a { color: #dff05a; }
 
@@ -157,4 +168,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   }
 
   .mobile-sheet-open .leaflet-control-zoom { display: none; }
+
+  .leaflet-control-attribution { margin-bottom: 68px !important; }
+  .mobile-sheet-open .leaflet-control-attribution { display: none; }
 }

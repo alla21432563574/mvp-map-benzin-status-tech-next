@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Activity, Building2, ChevronDown, Clock3, Fuel, LocateFixed, Loader2, Map as MapIcon, MapPinned, Moon, ShieldCheck, Sparkles, Star, Sun, X } from "lucide-react";
+import { Activity, Building2, ChevronDown, Fuel, LocateFixed, Loader2, Map as MapIcon, MapPinned, Moon, ShieldCheck, Sparkles, Star, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { distanceKm, relativeTime, stationBrandId, stationHasFuel, type MapPoint } from "@/lib/map-utils";
 import { selectSmartPick } from "@/lib/smart-pick";
@@ -203,7 +203,7 @@ export default function HomeMap() {
     }).then((response) => response.json()).then((data) => {
       const next = new Map(cachedSignals);
       for (const { station } of missing) {
-        const signal: RankingSignal = data.signals?.[station.id] ?? { confirmationCount: 1, uniqueConfirmers: 1, consistency: 0.55, lastConfirmationAt: null };
+        const signal: RankingSignal = data.signals?.[station.id] ?? { confirmationCount: 0, uniqueConfirmers: 0, consistency: 0, lastConfirmationAt: null };
         rankingCache.current.set(station.id, { signal, updatedAt: station.updated_at, expiresAt: Date.now() + 300_000 });
         next.set(station.id, signal);
       }
@@ -368,7 +368,7 @@ export default function HomeMap() {
   const sidebar = <div className="relative min-h-0 flex-1 overflow-hidden">
     <div className={`absolute inset-0 flex flex-col transition-all duration-300 ease-out ${selected ? "pointer-events-none -translate-x-8 opacity-0" : "translate-x-0 opacity-100"}`} aria-hidden={Boolean(selected)}>
       <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
-      <div className="flex items-center justify-between border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{brandFiltered.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="text-ink/40 dark:text-white/40">Smart Ranking</span></div>
+      <div className="flex items-center justify-between gap-3 border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{brandFiltered.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="shrink-0 text-[10px] text-ink/40 dark:text-white/40">Обновлено {latestUpdate ? relativeTime(latestUpdate, now) : "—"}</span></div>
       <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} smartPick={smartPick} smartPickLoading={rankingLoading} scrollToken={smartPickScrollToken} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={selectStation} onFocusStation={focusSmartPick} /></div>
     </div>
     <div className={`absolute inset-0 transition-all duration-300 ease-out ${selected ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"}`} aria-hidden={!selected}>
@@ -392,9 +392,8 @@ export default function HomeMap() {
             <div className="pointer-events-auto mx-auto mt-2 flex max-w-4xl gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {QUICK_CITIES.map((city) => <button key={city.name} onClick={() => moveToCity(city)} className="shrink-0 rounded-full border border-ink/5 bg-white/95 px-3 py-1.5 text-[11px] font-bold shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-lime dark:border-white/10 dark:bg-[#19241e]/95 dark:hover:bg-lime dark:hover:text-ink">{city.name}</button>)}
             </div>
-            <div className="pointer-events-auto mx-auto mt-1 flex max-w-4xl items-center justify-between gap-2">
+            <div className="pointer-events-auto mx-auto mt-1 flex max-w-4xl items-center gap-2">
               <div className="rounded-full bg-white/95 px-3 py-2 text-[11px] font-bold shadow-md backdrop-blur dark:bg-[#19241e]/95 sm:px-4 sm:text-xs"><span className={`mr-2 inline-block h-2 w-2 rounded-full ${loading ? "animate-pulse bg-amber-400" : "bg-emerald-500"}`} />АЗС в текущей области: {currentAreaCount.toLocaleString("ru-RU")}</div>
-              <div className="rounded-full bg-white/95 px-3 py-2 text-[11px] shadow-md backdrop-blur dark:bg-[#19241e]/95 sm:px-4 sm:text-xs"><Clock3 className="mr-1.5 inline" size={12} /><span className="hidden sm:inline">Последнее обновление: </span><b>{latestUpdate ? relativeTime(latestUpdate, now) : "нет данных"}</b></div>
             </div>
           </div>
 

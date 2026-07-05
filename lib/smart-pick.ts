@@ -16,7 +16,7 @@ type SmartPickContext = {
 // рекомендовать победителя». Пороговые значения собраны здесь, чтобы продукт
 // мог менять строгость рекомендации независимо от компонентов интерфейса.
 const RELIABILITY = {
-  minimumConfidence: 52,
+  minimumConfidence: 38,
   minimumScore: 43,
   maximumDistanceKm: 80,
 } as const;

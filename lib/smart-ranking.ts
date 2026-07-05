@@ -25,6 +25,14 @@ export type RankingContext = {
   now: number;
 };
 
+export type ConfidenceFactors = {
+  freshness: number;
+  confirmations: number;
+  consistency: number;
+  confirmers: number;
+  coverage: number;
+};
+
 // Веса намеренно собраны здесь: продукт может менять приоритеты без правок UI.
 const WEIGHTS = {
   distance: 26,
@@ -48,18 +56,19 @@ function freshness(value: string, now: number) {
   return 0.2;
 }
 
-function estimatedConfidence(station: Station, signal: RankingSignal | undefined, now: number) {
-  const confirmationCount = signal?.confirmationCount ?? 1;
-  const uniqueConfirmers = signal?.uniqueConfirmers ?? 1;
+export function calculateStationConfidence(station: Station, signal: RankingSignal | undefined, now: number) {
+  const confirmationCount = signal?.confirmationCount ?? 0;
+  const uniqueConfirmers = signal?.uniqueConfirmers ?? 0;
   const knownFuelCount = [station.ai92, station.ai95, station.ai98, station.ai100, station.diesel, station.gas].filter((value) => typeof value === "boolean").length;
-  const factors = {
+  const factors: ConfidenceFactors = {
     freshness: freshness(signal?.lastConfirmationAt || station.updated_at, now),
     confirmations: Math.min(1, Math.log2(confirmationCount + 1) / Math.log2(16)),
-    consistency: signal?.consistency ?? 0.55,
+    consistency: confirmationCount ? signal?.consistency ?? 0 : 0,
     confirmers: Math.min(1, uniqueConfirmers / 5),
     coverage: knownFuelCount / 6,
   };
-  return Math.round(100 * (factors.freshness * 0.45 + factors.confirmations * 0.2 + factors.consistency * 0.2 + factors.confirmers * 0.1 + factors.coverage * 0.05));
+  const confidence = Math.round(100 * (factors.freshness * 0.4 + factors.confirmations * 0.25 + factors.consistency * 0.15 + factors.confirmers * 0.1 + factors.coverage * 0.1));
+  return { confidence: Math.max(0, Math.min(100, confidence)), factors };
 }
 
 function recommendationReason(station: Station, distance: number, confidence: number, selectedFuels: ReadonlySet<FilterFuelKey>, lastConfirmationAt: string, now: number) {
@@ -77,7 +86,7 @@ export function rankStations(items: Array<{ station: Station; distance: number }
   const selected = [...context.selectedFuels];
   return items.map(({ station, distance }) => {
     const signal = context.signals.get(station.id);
-    const confidence = estimatedConfidence(station, signal, context.now);
+    const { confidence } = calculateStationConfidence(station, signal, context.now);
     const lastConfirmationAt = signal?.lastConfirmationAt || station.updated_at;
     const status = stationDisplayStatus(station).kind;
     const statusScore = status === "available" ? 1 : status === "partial" ? 0.68 : status === "unknown" ? 0.15 : 0;
@@ -86,7 +95,7 @@ export function rankStations(items: Array<{ station: Station; distance: number }
     const brandId = stationBrandId(station);
     const knownBrand = brandOptions.some((brand) => brand.id === brandId) ? 1 : 0;
     const affinity = Math.min(1, (context.brandAffinity[brandId] || 0) / 8);
-    const confirmationCount = signal?.confirmationCount ?? 1;
+    const confirmationCount = signal?.confirmationCount ?? 0;
     const queueScore = typeof station.queue_count === "number" ? 1 / (1 + station.queue_count / 3) : station.has_queue === false ? 1 : station.has_queue === true ? 0.2 : 0.55;
     const score =
       (1 / (1 + distance / 4)) * WEIGHTS.distance +

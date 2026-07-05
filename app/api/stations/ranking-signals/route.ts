@@ -50,9 +50,9 @@ export async function POST(request: Request) {
     const dominantCount = Math.max(...frequencies.values());
     const confirmers = new Set(reports.map((report) => report.telegram_user_id ? `telegram:${report.telegram_user_id}` : report.reporter_name ? `name:${report.reporter_name.toLocaleLowerCase("ru")}` : `source:${report.source}`));
     signals[stationId] = {
-      confirmationCount: reports.length + 1,
-      uniqueConfirmers: Math.max(1, confirmers.size),
-      consistency: reports.length > 1 ? dominantCount / reports.length : 0.55,
+      confirmationCount: reports.length,
+      uniqueConfirmers: confirmers.size,
+      consistency: reports.length > 1 ? dominantCount / reports.length : 0.5,
       lastConfirmationAt: reports[0]?.moderated_at || reports[0]?.created_at || null,
     };
   }
