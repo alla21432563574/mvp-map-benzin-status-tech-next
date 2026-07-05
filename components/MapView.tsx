@@ -3,6 +3,7 @@
 import L from "leaflet";
 import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { stationDisplayStatus } from "@/lib/map-utils";
 import type { MapBounds, Station } from "@/lib/types";
 
 export type MapTarget = { latitude: number; longitude: number; zoom: number; token: number };
@@ -20,12 +21,11 @@ type Props = {
 };
 
 function markerClass(station: Station) {
-  const values = [station.ai92, station.ai95, station.diesel, station.gas];
-  if (values.every((value) => value === null)) return "marker-gray";
-  const count = values.filter(Boolean).length;
-  if (count >= 3) return "marker-green";
-  if (count > 0) return "marker-amber";
-  return "marker-red";
+  const status = stationDisplayStatus(station).kind;
+  if (status === "available") return "marker-green";
+  if (status === "partial") return "marker-amber";
+  if (status === "unavailable") return "marker-red";
+  return "marker-gray";
 }
 
 function iconFor(station: Station, active: boolean) {

@@ -1,4 +1,4 @@
-import type { FilterFuelKey, Station } from "./types";
+import { filterFuelKeys, filterFuelLabels, type FilterFuelKey, type Station } from "./types";
 
 export type MapPoint = { latitude: number; longitude: number };
 
@@ -55,6 +55,39 @@ function plural(value: number, one: string, few: string, many: string) {
 
 export function stationHasFuel(station: Station, fuel: FilterFuelKey) {
   return station[fuel] === true;
+}
+
+export type StationStatusKind = "available" | "partial" | "unavailable" | "unknown";
+
+export type StationDisplayStatus = {
+  kind: StationStatusKind;
+  label: string;
+};
+
+export function stationDisplayStatus(station: Station, selectedFuels: ReadonlySet<FilterFuelKey> = new Set()): StationDisplayStatus {
+  const selected = [...selectedFuels];
+  if (selected.length === 1) {
+    const fuel = selected[0];
+    const value = station[fuel];
+    if (value === true) return { kind: "available", label: `${filterFuelLabels[fuel]} есть` };
+    if (value === false) return { kind: "unavailable", label: `${filterFuelLabels[fuel]} нет` };
+    return { kind: "unknown", label: `${filterFuelLabels[fuel]}: нет данных` };
+  }
+
+  const fuels = selected.length ? selected : [...filterFuelKeys];
+  const values = fuels.map((fuel) => station[fuel]);
+  const known = values.filter((value): value is boolean => typeof value === "boolean");
+  if (known.length === 0) return { kind: "unknown", label: "Нет данных" };
+
+  const availableCount = known.filter(Boolean).length;
+  if (availableCount === 0) {
+    if (selected.length && known.length < values.length) return { kind: "unknown", label: "Нет данных" };
+    return { kind: "unavailable", label: selected.length ? "Выбранного топлива нет" : "Нет топлива" };
+  }
+  if (availableCount === known.length) {
+    return { kind: "available", label: selected.length ? "Выбранное топливо есть" : "Есть топливо" };
+  }
+  return { kind: "partial", label: "Частично" };
 }
 
 export function brandInitials(brand: string) {

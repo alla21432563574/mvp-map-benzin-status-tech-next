@@ -222,7 +222,7 @@ export default function HomeMap() {
   const sidebar = <>
     <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
     <div className="flex items-center justify-between border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{visible.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="text-ink/40 dark:text-white/40">умная сортировка</span></div>
-    <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} loading={loading} selectedId={selected?.id ?? null} now={now} onSelect={setSelected} /></div>
+    <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={setSelected} /></div>
   </>;
 
   return (
