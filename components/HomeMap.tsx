@@ -3,8 +3,9 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Clock3, Fuel, LocateFixed, Loader2, Moon, ShieldCheck, Sun, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { distanceKm, relativeTime, stationBrandId, stationHasFuel, type MapPoint } from "@/lib/map-utils";
+import { isStrongRecommendation, rankStations, type RankingSignal } from "@/lib/smart-ranking";
 import type { FilterFuelKey, MapBounds, Station, StationDetails } from "@/lib/types";
 import CitySearch, { type GeocodePlace } from "./CitySearch";
 import FilterPanel from "./FilterPanel";
@@ -39,7 +40,15 @@ function initialView() {
 
 function initialSet<T extends string>(key: string) {
   if (typeof window === "undefined") return new Set<T>();
-  return new Set((new URLSearchParams(window.location.search).get(key) ?? "").split(",").filter(Boolean) as T[]);
+  const urlValue = new URLSearchParams(window.location.search).get(key);
+  const value = urlValue ?? (key === "fuel" ? localStorage.getItem("last-fuel-filter") : "") ?? "";
+  return new Set(value.split(",").filter(Boolean) as T[]);
+}
+
+function initialBrandAffinity() {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem("station-brand-affinity") || "{}") as Record<string, number>; }
+  catch { return {}; }
 }
 
 export default function HomeMap() {
@@ -63,6 +72,9 @@ export default function HomeMap() {
   const [dark, setDark] = useState(false);
   const [stationDetails, setStationDetails] = useState<StationDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [rankingSignals, setRankingSignals] = useState<Map<string, RankingSignal>>(new Map());
+  const [brandAffinity, setBrandAffinity] = useState<Record<string, number>>(initialBrandAffinity);
+  const rankingCache = useRef(new Map<string, { signal: RankingSignal; updatedAt: string; expiresAt: number }>());
   const selectedStationId = selected?.id;
 
   useEffect(() => {
@@ -112,6 +124,10 @@ export default function HomeMap() {
   }, [brands, center, fuels, zoom]);
 
   useEffect(() => {
+    localStorage.setItem("last-fuel-filter", [...fuels].join(","));
+  }, [fuels]);
+
+  useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 5000);
     return () => window.clearTimeout(timer);
@@ -147,27 +163,48 @@ export default function HomeMap() {
     setZoom(nextZoom);
   }, []);
 
-  const visible = useMemo(() => stations.filter((station) => {
-    if (fuels.size && ![...fuels].every((fuel) => stationHasFuel(station, fuel))) return false;
-    return brands.size === 0 || brands.has(stationBrandId(station));
-  }), [brands, fuels, stations]);
+  const brandFiltered = useMemo(() => stations.filter((station) => brands.size === 0 || brands.has(stationBrandId(station))), [brands, stations]);
+  const visible = useMemo(() => brandFiltered.filter((station) => !fuels.size || [...fuels].every((fuel) => stationHasFuel(station, fuel))), [brandFiltered, fuels]);
 
-  const listItems = useMemo(() => {
+  const rankingCandidates = useMemo(() => {
     const origin = userLocation ?? center;
-    const selectedFuels = [...fuels];
-    return visible.map((station) => ({ station, distance: distanceKm(origin, station) })).sort((left, right) => {
-      const distanceBand = Math.floor(left.distance / 2) - Math.floor(right.distance / 2);
-      if (distanceBand) return distanceBand;
-      const leftFuelScore = selectedFuels.filter((fuel) => stationHasFuel(left.station, fuel)).length;
-      const rightFuelScore = selectedFuels.filter((fuel) => stationHasFuel(right.station, fuel)).length;
-      if (leftFuelScore !== rightFuelScore) return rightFuelScore - leftFuelScore;
-      const freshness = new Date(right.station.updated_at).getTime() - new Date(left.station.updated_at).getTime();
-      if (freshness) return freshness;
-      const leftBrand = brands.has(stationBrandId(left.station)) ? 1 : 0;
-      const rightBrand = brands.has(stationBrandId(right.station)) ? 1 : 0;
-      return rightBrand - leftBrand || left.distance - right.distance;
+    return brandFiltered.map((station) => ({ station, distance: distanceKm(origin, station) })).sort((left, right) => left.distance - right.distance).slice(0, 250);
+  }, [brandFiltered, center, userLocation]);
+  const rankingCandidateKey = rankingCandidates.map(({ station }) => `${station.id}:${station.updated_at}`).join("|");
+
+  useEffect(() => {
+    if (!rankingCandidates.length) { setRankingSignals(new Map()); return; }
+    const cachedSignals = new Map<string, RankingSignal>();
+    const missing = rankingCandidates.filter(({ station }) => {
+      const cached = rankingCache.current.get(station.id);
+      if (cached && cached.updatedAt === station.updated_at && cached.expiresAt > Date.now()) {
+        cachedSignals.set(station.id, cached.signal);
+        return false;
+      }
+      return true;
     });
-  }, [brands, center, fuels, userLocation, visible]);
+    setRankingSignals(cachedSignals);
+    if (!missing.length) return;
+    const controller = new AbortController();
+    fetch("/api/stations/ranking-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: missing.map(({ station }) => station.id) }),
+      signal: controller.signal,
+    }).then((response) => response.json()).then((data) => {
+      const next = new Map(cachedSignals);
+      for (const { station } of missing) {
+        const signal: RankingSignal = data.signals?.[station.id] ?? { confirmationCount: 1, uniqueConfirmers: 1, consistency: 0.55, lastConfirmationAt: null };
+        rankingCache.current.set(station.id, { signal, updatedAt: station.updated_at, expiresAt: Date.now() + 300_000 });
+        next.set(station.id, signal);
+      }
+      setRankingSignals(next);
+    }).catch((error) => { if (error instanceof Error && error.name !== "AbortError") setRankingSignals(cachedSignals); });
+    return () => controller.abort();
+  }, [rankingCandidateKey, rankingCandidates]);
+
+  const listItems = useMemo(() => rankStations(rankingCandidates, { selectedFuels: fuels, brandAffinity, signals: rankingSignals, now }), [brandAffinity, fuels, now, rankingCandidates, rankingSignals]);
+  const bestOption = isStrongRecommendation(listItems[0], fuels) ? listItems[0] : null;
 
   const latestUpdate = useMemo(() => stations.reduce<string | null>((latest, station) => !latest || new Date(station.updated_at) > new Date(latest) ? station.updated_at : latest, null), [stations]);
   const currentAreaCount = fuels.size || brands.size ? visible.length : totalStations;
@@ -178,8 +215,18 @@ export default function HomeMap() {
     setNotice(`${place.name}: загружаем АЗС поблизости`);
   };
 
-  const moveToStation = (station: Station) => {
+  const selectStation = useCallback((station: Station) => {
     setSelected(station);
+    const brandId = stationBrandId(station);
+    setBrandAffinity((current) => {
+      const next = { ...current, [brandId]: Math.min(50, (current[brandId] || 0) + 1) };
+      localStorage.setItem("station-brand-affinity", JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const moveToStation = (station: Station) => {
+    selectStation(station);
     setTarget({ latitude: station.latitude, longitude: station.longitude, zoom: 15, token: Date.now() });
   };
 
@@ -248,8 +295,8 @@ export default function HomeMap() {
   const sidebar = <div className="relative min-h-0 flex-1 overflow-hidden">
     <div className={`absolute inset-0 flex flex-col transition-all duration-300 ease-out ${selected ? "pointer-events-none -translate-x-8 opacity-0" : "translate-x-0 opacity-100"}`} aria-hidden={Boolean(selected)}>
       <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
-      <div className="flex items-center justify-between border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{visible.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="text-ink/40 dark:text-white/40">умная сортировка</span></div>
-      <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={setSelected} /></div>
+      <div className="flex items-center justify-between border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{brandFiltered.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="text-ink/40 dark:text-white/40">Smart Ranking</span></div>
+      <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} bestOption={bestOption} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={selectStation} /></div>
     </div>
     <div className={`absolute inset-0 transition-all duration-300 ease-out ${selected ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"}`} aria-hidden={!selected}>
       {selected && <StationCard station={selected} details={stationDetails} detailsLoading={detailsLoading} distance={selectedDistance} favorite={favorites.has(selected.id)} now={now} onBack={() => { setSelected(null); setReporting(false); }} onReport={() => setReporting(true)} onFavorite={toggleFavorite} onShare={shareStation} />}
@@ -265,7 +312,7 @@ export default function HomeMap() {
         </aside>
 
         <section className="relative min-w-0 flex-1">
-          <MapView stations={visible} selectedId={selected?.id ?? null} onSelect={setSelected} onBoundsChange={handleBoundsChange} onViewChange={handleViewChange} initialCenter={start.center} initialZoom={start.zoom} target={target} userLocation={userLocation} />
+          <MapView stations={visible} selectedId={selected?.id ?? null} onSelect={selectStation} onBoundsChange={handleBoundsChange} onViewChange={handleViewChange} initialCenter={start.center} initialZoom={start.zoom} target={target} userLocation={userLocation} />
 
           <div className="pointer-events-none absolute left-3 right-3 top-3 z-[600] sm:left-5 sm:right-5 sm:top-5">
             <div className="pointer-events-auto mx-auto flex max-w-4xl gap-2"><CitySearch center={center} onPlaceSelect={moveTo} onStationSelect={moveToStation} /><button onClick={locate} disabled={locating} className="flex h-14 shrink-0 items-center gap-2 rounded-2xl bg-forest px-4 font-bold text-white shadow-soft transition hover:bg-ink disabled:opacity-60 dark:bg-lime dark:text-ink dark:hover:bg-white sm:h-16 sm:rounded-[22px] sm:px-5" aria-label="Моё местоположение">{locating ? <Loader2 className="animate-spin" size={20} /> : <LocateFixed size={20} />}<span className="hidden md:inline">Моё местоположение</span></button><button onClick={toggleTheme} className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white text-ink shadow-soft transition hover:bg-cream dark:bg-[#19241e] dark:text-lime dark:hover:bg-white/10 sm:hidden" aria-label={dark ? "Включить светлую тему" : "Включить тёмную тему"}>{dark ? <Sun size={19} /> : <Moon size={19} />}</button></div>

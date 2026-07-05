@@ -1,10 +1,9 @@
 "use client";
 
-import { ChevronRight, Clock3, MapPin } from "lucide-react";
+import { ChevronRight, Clock3, MapPin, Navigation, Star } from "lucide-react";
 import { brandInitials, formatDistance, relativeTime, stationDisplayStatus, type StationStatusKind } from "@/lib/map-utils";
+import type { RankedStation } from "@/lib/smart-ranking";
 import type { FilterFuelKey, Station } from "@/lib/types";
-
-type Item = { station: Station; distance: number };
 
 const statusClasses: Record<StationStatusKind, string> = {
   available: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
@@ -21,7 +20,8 @@ const dotClasses: Record<StationStatusKind, string> = {
 };
 
 type Props = {
-  items: Item[];
+  items: RankedStation[];
+  bestOption: RankedStation | null;
   loading: boolean;
   selectedId: string | null;
   selectedFuels: ReadonlySet<FilterFuelKey>;
@@ -29,24 +29,30 @@ type Props = {
   onSelect: (station: Station) => void;
 };
 
-export default function StationList({ items, loading, selectedId, selectedFuels, now, onSelect }: Props) {
+export default function StationList({ items, bestOption, loading, selectedId, selectedFuels, now, onSelect }: Props) {
   if (loading && !items.length) return <div className="space-y-2 p-3">{[1, 2, 3, 4].map((item) => <div key={item} className="h-28 animate-pulse rounded-2xl bg-ink/5 dark:bg-white/5" />)}</div>;
   if (!items.length) return <div className="px-7 py-12 text-center"><MapPin className="mx-auto text-forest/35 dark:text-lime/35" size={30} /><p className="mt-3 font-bold">АЗС не найдены</p><p className="mt-1 text-sm text-ink/45 dark:text-white/45">Измените фильтры или область карты.</p></div>;
 
+  const regularItems = bestOption ? items.filter((item) => item.station.id !== bestOption.station.id) : items;
   return (
     <div className="space-y-2 p-3">
-      {items.slice(0, 150).map(({ station, distance }) => {
+      {bestOption && <article onClick={() => onSelect(bestOption.station)} className="mb-3 cursor-pointer rounded-[22px] border border-lime/60 bg-gradient-to-br from-forest to-[#174d35] p-4 text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl">
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.14em] text-lime"><Star size={14} fill="currentColor" />Лучший вариант рядом</div>
+        <div className="mt-3 flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/10 text-[10px] font-black text-lime">{brandInitials(bestOption.station.brand)}</span><div className="min-w-0 flex-1"><b className="block truncate text-base">{bestOption.station.brand || bestOption.station.name}</b><p className="mt-1 text-xs text-white/65">{stationDisplayStatus(bestOption.station, selectedFuels).label}</p><div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-white/70"><span>Уверенность {bestOption.confidence}%</span><span>{relativeTime(bestOption.lastConfirmationAt, now)}</span><span>{formatDistance(bestOption.distance)}</span></div></div></div>
+        <a onClick={(event) => event.stopPropagation()} href={`https://yandex.ru/maps/?rtext=~${bestOption.station.latitude},${bestOption.station.longitude}&rtt=auto`} target="_blank" rel="noreferrer" className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-lime px-4 py-2.5 text-xs font-black text-ink transition hover:bg-white"><Navigation size={14} />Построить маршрут</a>
+      </article>}
+      {regularItems.slice(0, 150).map(({ station, distance, confidence, lastConfirmationAt, reason }) => {
         const status = stationDisplayStatus(station, selectedFuels);
         return <button key={station.id} onClick={() => onSelect(station)} className={`group w-full rounded-2xl border p-3 text-left transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${selectedId === station.id ? "border-forest/40 bg-forest/[.06] dark:border-lime/40 dark:bg-lime/[.06]" : "border-ink/[.07] bg-white dark:border-white/[.07] dark:bg-[#19241e]"}`}>
           <div className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-forest text-[10px] font-black tracking-tight text-lime">{brandInitials(station.brand)}</span>
             <span className="min-w-0 flex-1">
-              <span className="flex items-start justify-between gap-2"><b className="block min-w-0 truncate text-sm leading-tight">{station.brand || station.name || "АЗС"}</b><span className="shrink-0 text-xs font-bold text-forest dark:text-lime">{formatDistance(distance)}</span></span>
+              <span className="flex items-start justify-between gap-2"><span className="min-w-0"><b className="block truncate text-sm leading-tight">{station.brand || station.name || "АЗС"}</b><small className="mt-1 block truncate text-[10px] font-bold text-forest dark:text-lime">{reason}</small></span><span className="shrink-0 text-xs font-bold text-forest dark:text-lime">{formatDistance(distance)}</span></span>
               <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-bold ${statusClasses[status.kind]}`}><i className={`h-1.5 w-1.5 rounded-full ${dotClasses[status.kind]}`} />{status.label}</span>
               <span className="mt-2 block truncate text-xs text-ink/45 dark:text-white/45">{station.address || "Адрес не указан"}</span>
             </span>
           </div>
-          <div className="mt-2.5 flex items-center justify-between border-t border-ink/[.06] pt-2.5 text-[11px] text-ink/40 dark:border-white/[.06] dark:text-white/40"><span className="flex items-center gap-1"><Clock3 size={11} />{relativeTime(station.updated_at, now)}</span><span className="flex items-center gap-1 font-bold text-forest dark:text-lime">Показать <ChevronRight size={13} /></span></div>
+          <div className="mt-2.5 flex items-center justify-between border-t border-ink/[.06] pt-2.5 text-[11px] text-ink/40 dark:border-white/[.06] dark:text-white/40"><span className="flex items-center gap-2"><span className="flex items-center gap-1"><Clock3 size={11} />{relativeTime(lastConfirmationAt, now)}</span><span>· {confidence}%</span></span><span className="flex items-center gap-1 font-bold text-forest dark:text-lime">Показать <ChevronRight size={13} /></span></div>
         </button>;
       })}
       {items.length > 150 && <p className="py-3 text-center text-xs text-ink/40">Показаны ближайшие 150 из {items.length}</p>}
