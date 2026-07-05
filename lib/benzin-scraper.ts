@@ -104,6 +104,7 @@ export type BenzinScrapeResult = {
   reportRequestCount: number;
   reportStationCount: number;
   reportCandidatesSkipped: number;
+  reportErrors: string[];
   reportCursors: Array<{ stationExternalKey: string; lastReportAt: string }>;
   tilesProcessed: number;
   truncatedTiles: number;
@@ -233,6 +234,7 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
   let tilesProcessed = 0;
   let truncatedTiles = 0;
   let outsideRussiaDiscarded = 0;
+  const reportErrors: string[] = [];
 
   const requestTile = async (tile: Tile) => {
     if (requestCount > 0) await sleep(requestDelayMs);
@@ -310,21 +312,33 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
   const candidates = [...reportCandidates.entries()].sort((left, right) => left[1] - right[1]);
   const reportRequestLimit = Math.max(1, Math.min(10_000, options.maxReportStationRequests ?? 2_000));
   const processedCandidates = candidates.slice(0, reportRequestLimit);
+  const successfulCandidates: Array<[number, number]> = [];
   for (const [stationId] of processedCandidates) {
     await sleep(requestDelayMs);
     reportRequestCount += 1;
-    const detail = await withRetry(async () => {
-      const response = await fetch(`${STATION_DETAIL_URL}/${stationId}`, {
-        headers: { accept: "application/json", referer: "https://map.benzin-status.tech/", "user-agent": "Mozilla/5.0 (compatible; benzin-status-mvp/1.0; low-rate public-data import)" },
-        signal: AbortSignal.timeout(30_000),
+    let detail: { reports?: unknown };
+    try {
+      detail = await withRetry(async () => {
+        const response = await fetch(`${STATION_DETAIL_URL}/${stationId}`, {
+          headers: { accept: "application/json", referer: "https://map.benzin-status.tech/", "user-agent": "Mozilla/5.0 (compatible; benzin-status-mvp/1.0; low-rate public-data import)" },
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (response.status === 403 || response.status === 429) {
+          throw new ProtectionDetectedError(`Сайт вернул HTTP ${response.status}; scraper остановлен без обхода защиты.`);
+        }
+        if (!response.ok) throw new Error(`Публичный station detail API вернул HTTP ${response.status}`);
+        return response.json() as Promise<{ reports?: unknown }>;
       });
-      if (response.status === 403 || response.status === 429) {
-        throw new ProtectionDetectedError(`Сайт вернул HTTP ${response.status}; scraper остановлен без обхода защиты.`);
-      }
-      if (!response.ok) throw new Error(`Публичный station detail API вернул HTTP ${response.status}`);
-      return response.json() as Promise<{ reports?: unknown }>;
-    });
-    if (!Array.isArray(detail.reports)) continue;
+    } catch (error) {
+      if (error instanceof ProtectionDetectedError) throw error;
+      reportErrors.push(`station ${stationId}: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    if (!Array.isArray(detail.reports)) {
+      reportErrors.push(`station ${stationId}: detail API не вернул массив reports`);
+      continue;
+    }
+    successfulCandidates.push([stationId, reportCandidates.get(stationId)!]);
     for (const rawReport of detail.reports as PublicApiReport[]) {
       if (!Number.isFinite(rawReport.id) || !Number.isFinite(rawReport.createdAt)) continue;
       const stationCursor = options.reportCursors?.get(String(stationId));
@@ -355,7 +369,8 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
     stations, reports: uniqueReports, duplicatesDiscarded, httpStatus: 200, requestCount,
     reportRequestCount, reportStationCount: processedCandidates.length,
     reportCandidatesSkipped: candidates.length - processedCandidates.length,
-    reportCursors: processedCandidates.map(([stationId, lastReportAt]) => ({ stationExternalKey: String(stationId), lastReportAt: new Date(lastReportAt).toISOString() })),
+    reportErrors,
+    reportCursors: successfulCandidates.map(([stationId, lastReportAt]) => ({ stationExternalKey: String(stationId), lastReportAt: new Date(lastReportAt).toISOString() })),
     tilesProcessed, truncatedTiles, outsideRussiaDiscarded,
     durationMs: Date.now() - startedAt,
   };

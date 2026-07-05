@@ -120,7 +120,7 @@ pnpm scrape:benzin:debug -- --dry-run
 
 В dry-run все записи печатаются в консоль и сохраняются в `outputs/scraper-debug/results.json`. Этот режим работает даже при `SCRAPER_ENABLED=false`.
 
-Результат проверяется в таблицах `stations`, `station_reports` и `scrape_logs`. Для импортированных станций `external_source` равен `benzin-status`, а `imported_at` показывает время последней успешной финализации снимка. Журнал отдельно хранит статистику станций и `reports_found_count`, `reports_created_count`, `reports_unchanged_count`, `report_request_count`. Последние 20 отметок доступны через `GET /api/stations/{id}/reports`; ответ также содержит сводку за час и честный процент согласованности последних десяти отметок.
+Результат проверяется в таблицах `stations`, `station_reports` и `scrape_logs`. Для импортированных станций `external_source` равен `benzin-status`, а `imported_at` показывает время последней успешной финализации снимка. Журнал отдельно хранит статистику станций и `reports_found_count`, `reports_created_count`, `reports_unchanged_count`, `reports_skipped_count`, `reports_error_count`, `reports_errors`, `report_request_count`. Последние 20 отметок доступны через `GET /api/stations/{id}/reports`; ответ также содержит сводку за час и честный процент согласованности последних десяти отметок.
 
 Открытая карта повторно запрашивает только текущий bbox раз в две минуты и при возвращении пользователя во вкладку. Поэтому успешно опубликованный снимок появляется без ручного движения карты и без загрузки всей базы.
 

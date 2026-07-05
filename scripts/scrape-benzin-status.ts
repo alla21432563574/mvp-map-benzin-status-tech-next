@@ -28,6 +28,8 @@ type RunStats = {
   reportsCreated: number;
   reportsUnchanged: number;
   reportRequestCount: number;
+  reportsSkipped: number;
+  reportsErrors: string[];
 };
 
 const config = {
@@ -167,6 +169,9 @@ async function finishLog(supabase: SupabaseClient, id: string, status: "success"
     reports_created_count: stats.reportsCreated,
     reports_unchanged_count: stats.reportsUnchanged,
     report_request_count: stats.reportRequestCount,
+    reports_skipped_count: stats.reportsSkipped,
+    reports_error_count: stats.reportsErrors.length,
+    reports_errors: stats.reportsErrors.length ? stats.reportsErrors.slice(0, 100) : null,
     error_message: errorMessage?.slice(0, 2_000) ?? null,
     error_details: errorMessage ? { message: errorMessage, recordedAt: new Date().toISOString() } : null,
   }).eq("id", id);
@@ -185,6 +190,7 @@ async function runOnce() {
     found: 0, staged: 0, updated: 0, created: 0, unchanged: 0, deleted: 0,
     duplicates: 0, skipped: 0, requestCount: 0, fetchDurationMs: 0, importDurationMs: 0,
     reportsFound: 0, reportsCreated: 0, reportsUnchanged: 0, reportRequestCount: 0,
+    reportsSkipped: 0, reportsErrors: [],
   };
   if (!lock) {
     console.log("Scraping пропущен: предыдущий запуск ещё выполняется.");
@@ -233,6 +239,8 @@ async function runOnce() {
     stats.reportRequestCount = result.reportRequestCount;
     stats.reportsFound = result.reports.length;
     stats.skipped = result.reportCandidatesSkipped;
+    stats.reportsSkipped = result.reportCandidatesSkipped;
+    stats.reportsErrors = result.reportErrors;
     stats.duplicates = result.duplicatesDiscarded;
     if (config.debug || config.dryRun) {
       await writeFile(path.join(DEBUG_DIR, "results.json"), JSON.stringify(result.stations, null, 2), "utf8");
@@ -278,7 +286,8 @@ async function runOnce() {
       (total, station) => total + [station.ai92, station.ai95, station.diesel, station.gas].filter((value) => value !== null).length,
       0,
     );
-    console.log(`Метрики: режим ${config.mode}; HTTP ${result.httpStatus}; запросов станций ${result.requestCount}; запросов истории ${result.reportRequestCount}; отложено карточек истории ${result.reportCandidatesSkipped}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; отметок найдено ${result.reports.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
+    console.log(`Метрики: режим ${config.mode}; HTTP ${result.httpStatus}; запросов станций ${result.requestCount}; запросов истории ${result.reportRequestCount}; отложено карточек истории ${result.reportCandidatesSkipped}; ошибок истории ${result.reportErrors.length}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; отметок найдено ${result.reports.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
+    if (result.reportErrors.length) console.warn(`Ошибки истории:\n${result.reportErrors.slice(0, 20).join("\n")}`);
     phase = "logging";
     if (supabase && logId) await finishLog(supabase, logId, "success", stats);
     console.log(`Готово: найдено ${stats.found}, создано ${stats.created}, обновлено ${stats.updated}, без изменений ${stats.unchanged}, удалено ${stats.deleted}, дублей ${stats.duplicates}; отметок новых ${stats.reportsCreated}, повторных ${stats.reportsUnchanged}.`);

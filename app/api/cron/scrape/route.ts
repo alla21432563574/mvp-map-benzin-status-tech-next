@@ -24,6 +24,8 @@ type Stats = {
   reportsCreated: number;
   reportsUnchanged: number;
   reportRequestCount: number;
+  reportsSkipped: number;
+  reportsErrors: string[];
 };
 
 function authorized(request: Request) {
@@ -86,6 +88,7 @@ export async function GET(request: Request) {
     found: 0, staged: 0, created: 0, updated: 0, unchanged: 0, deleted: 0,
     duplicates: 0, skipped: 0, requestCount: 0, fetchDurationMs: 0, importDurationMs: 0,
     reportsFound: 0, reportsCreated: 0, reportsUnchanged: 0, reportRequestCount: 0,
+    reportsSkipped: 0, reportsErrors: [],
   };
   let phase = "logging";
   try {
@@ -125,6 +128,9 @@ export async function GET(request: Request) {
     stats.reportRequestCount = result.reportRequestCount;
     stats.reportsFound = result.reports.length;
     stats.skipped = result.reportCandidatesSkipped;
+    stats.reportsSkipped = result.reportCandidatesSkipped;
+    stats.reportsErrors = result.reportErrors;
+    errors.push(...result.reportErrors.map((message) => `Report: ${message}`));
     stats.duplicates = result.duplicatesDiscarded;
 
     phase = "import";
@@ -164,6 +170,8 @@ export async function GET(request: Request) {
       import_duration_ms: stats.importDurationMs, duration_ms: Date.now() - startedAt,
       reports_found_count: stats.reportsFound, reports_created_count: stats.reportsCreated,
       reports_unchanged_count: stats.reportsUnchanged, report_request_count: stats.reportRequestCount,
+      reports_skipped_count: stats.reportsSkipped, reports_error_count: stats.reportsErrors.length,
+      reports_errors: stats.reportsErrors.length ? stats.reportsErrors.slice(0, 100) : null,
       error_message: errors.length ? errors.join("; ").slice(0, 2_000) : null,
       error_details: errors.length ? { errors, recordedAt: new Date().toISOString() } : null,
     }).eq("id", logId);
@@ -181,6 +189,8 @@ export async function GET(request: Request) {
         import_duration_ms: stats.importDurationMs, duration_ms: Date.now() - startedAt,
         reports_found_count: stats.reportsFound, reports_created_count: stats.reportsCreated,
         reports_unchanged_count: stats.reportsUnchanged, report_request_count: stats.reportRequestCount,
+        reports_skipped_count: stats.reportsSkipped, reports_error_count: stats.reportsErrors.length,
+        reports_errors: stats.reportsErrors.length ? stats.reportsErrors.slice(0, 100) : null,
         error_message: errors.join("; ").slice(0, 2_000),
         error_details: { errors, recordedAt: new Date().toISOString() },
       }).eq("id", logId);
