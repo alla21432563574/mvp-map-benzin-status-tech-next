@@ -45,7 +45,7 @@ export async function GET(request: Request) {
   const startedAt = performance.now();
 
   const createQuery = (range?: { west: number; east: number }) => {
-    let query = supabase.from("stations").select("*");
+    let query = supabase.from("stations").select("*").eq("is_active", true);
     if (bbox) {
       query = query
         .gte("longitude", range!.west)
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
 
   if (viewport) {
     for (const range of ranges) {
-      let query = supabase.from("stations").select("*", { count: "exact" });
+      let query = supabase.from("stations").select("*", { count: "exact" }).eq("is_active", true);
       if (bbox) query = query.gte("longitude", range!.west).lte("longitude", range!.east).gte("latitude", bbox.south).lte("latitude", bbox.north);
       const { data, error, count } = await query.order("name").order("id").range(0, requestedLimit - 1);
       if (error) return NextResponse.json({ error: "Не удалось загрузить АЗС" }, { status: 500 });

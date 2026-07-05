@@ -22,6 +22,9 @@ create table public.stations (
   external_key text,
   source_updated_at timestamptz,
   imported_at timestamptz,
+  is_active boolean not null default true,
+  removed_at timestamptz,
+  missing_import_runs integer not null default 0,
   created_at timestamptz not null default now()
 );
 
@@ -34,7 +37,17 @@ create table public.scrape_logs (
   found_count integer not null default 0,
   updated_count integer not null default 0,
   created_count integer not null default 0,
+  unchanged_count integer not null default 0,
+  deleted_count integer not null default 0,
+  duplicate_count integer not null default 0,
+  skipped_count integer not null default 0,
+  request_count integer not null default 0,
+  fetch_duration_ms integer,
+  import_duration_ms integer,
+  duration_ms integer,
+  run_id uuid,
   error_message text,
+  error_details jsonb,
   created_at timestamptz not null default now()
 );
 

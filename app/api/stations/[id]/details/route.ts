@@ -77,7 +77,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const client = admin || createPublicClient();
   if (!client) return NextResponse.json({ error: "Supabase не настроен" }, { status: 503 });
 
-  const { data: station, error: stationError } = await client.from("stations").select("id,name,address,latitude,longitude,brand,ai92,ai95,diesel,gas,updated_at,update_source").eq("id", id).single();
+  const { data: station, error: stationError } = await client.from("stations").select("id,name,address,latitude,longitude,brand,ai92,ai95,diesel,gas,updated_at,update_source").eq("id", id).eq("is_active", true).single();
   if (stationError || !station) return NextResponse.json({ error: "АЗС не найдена" }, { status: 404 });
 
   let reports: ReportRow[] = [];

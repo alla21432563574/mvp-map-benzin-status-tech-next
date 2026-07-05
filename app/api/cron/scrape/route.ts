@@ -1,13 +1,26 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { BENZIN_SOURCE, fetchBenzinStations } from "@/lib/benzin-scraper";
+import { atomicImportStations } from "@/lib/station-import";
 import { createAdminClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-type Stats = { found: number; created: number; updated: number; skipped: number };
+type Stats = {
+  found: number;
+  staged: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  deleted: number;
+  duplicates: number;
+  skipped: number;
+  requestCount: number;
+  fetchDurationMs: number;
+  importDurationMs: number;
+};
 
 function authorized(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -18,7 +31,12 @@ function authorized(request: Request) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const value = error as { code?: string; message?: string; details?: string; hint?: string };
+    return [value.code, value.message, value.details, value.hint].filter(Boolean).join(": ") || JSON.stringify(error);
+  }
+  return String(error);
 }
 
 function numberInRange(value: string | undefined, fallback: number, min: number, max: number) {
@@ -60,44 +78,82 @@ export async function GET(request: Request) {
   }
 
   let logId: string | null = null;
-  const stats: Stats = { found: 0, created: 0, updated: 0, skipped: 0 };
+  const stats: Stats = {
+    found: 0, staged: 0, created: 0, updated: 0, unchanged: 0, deleted: 0,
+    duplicates: 0, skipped: 0, requestCount: 0, fetchDurationMs: 0, importDurationMs: 0,
+  };
+  let phase = "logging";
   try {
     const { data: log, error: logError } = await supabase
-      .from("scrape_logs").insert({ source: BENZIN_SOURCE, status: "running" }).select("id").single();
+      .from("scrape_logs").insert({ source: BENZIN_SOURCE, status: "running", run_id: token }).select("id").single();
     if (logError) throw logError;
     logId = log.id as string;
 
+    const scraperMode = process.env.SCRAPER_MODE === "russia" ? "russia" as const : "city" as const;
+    phase = "fetch";
+    const fetchStartedAt = Date.now();
     const result = await fetchBenzinStations({
+      mode: scraperMode,
       bounds: process.env.SCRAPER_BOUNDS || "55.40,36.80,56.10,38.40",
       maxStations: numberInRange(process.env.SCRAPER_MAX_STATIONS_PER_RUN, 5_000, 1, 5_000),
       latitude: Number(process.env.SCRAPER_CITY_CENTER_LAT || 55.7558),
       longitude: Number(process.env.SCRAPER_CITY_CENTER_LNG || 37.6173),
       city: process.env.SCRAPER_CITY || "Москва",
+      gridStepDegrees: numberInRange(process.env.SCRAPER_GRID_STEP_DEGREES, 4, 0.5, 10),
+      requestDelayMs: numberInRange(process.env.SCRAPER_REQUEST_DELAY_MS, 250, 100, 5_000),
     });
+    stats.fetchDurationMs = Date.now() - fetchStartedAt;
     stats.found = result.stations.length;
+    stats.requestCount = result.requestCount;
+    stats.duplicates = result.duplicatesDiscarded;
 
-    const { data: imported, error: importError } = await supabase.rpc("bulk_upsert_scraped_stations", {
-      p_stations: result.stations.map(({ rawText: _rawText, ...station }) => station),
-    });
-    if (importError) throw importError;
-    const importedStats = Array.isArray(imported) ? imported[0] : imported;
-    stats.created = Number(importedStats?.created_count || 0);
-    stats.updated = Number(importedStats?.updated_count || 0);
-    stats.skipped = Number(importedStats?.skipped_count || 0);
+    phase = "import";
+    const importStartedAt = Date.now();
+    let imported;
+    try {
+      imported = await atomicImportStations(supabase, result.stations, {
+        runId: token,
+        source: BENZIN_SOURCE,
+        foundCount: result.stations.length,
+        allowDeactivate: scraperMode === "russia" && result.truncatedTiles === 0,
+        minimumSnapshotRatio: numberInRange(process.env.SCRAPER_MIN_SNAPSHOT_RATIO, 0.85, 0.5, 1),
+        missingRunsBeforeDeactivate: numberInRange(process.env.SCRAPER_MISSING_RUNS_BEFORE_DEACTIVATE, 3, 1, 20),
+      });
+    } finally {
+      stats.importDurationMs = Date.now() - importStartedAt;
+    }
+    stats.staged = imported.staged;
+    stats.created = imported.created;
+    stats.updated = imported.updated;
+    stats.unchanged = imported.unchanged;
+    stats.deleted = imported.deleted;
+    stats.duplicates += imported.duplicates;
 
+    phase = "logging";
     const { error: finishError } = await supabase.from("scrape_logs").update({
       finished_at: new Date().toISOString(), status: "success", found_count: stats.found,
       created_count: stats.created, updated_count: stats.updated,
+      unchanged_count: stats.unchanged, deleted_count: stats.deleted,
+      duplicate_count: stats.duplicates, skipped_count: stats.skipped,
+      request_count: stats.requestCount, fetch_duration_ms: stats.fetchDurationMs,
+      import_duration_ms: stats.importDurationMs, duration_ms: Date.now() - startedAt,
       error_message: errors.length ? errors.join("; ").slice(0, 2_000) : null,
+      error_details: errors.length ? { errors, recordedAt: new Date().toISOString() } : null,
     }).eq("id", logId);
     if (finishError) throw finishError;
     return NextResponse.json({ ...stats, deletedLogs, retentionDays, durationMs: Date.now() - startedAt, errors });
   } catch (error) {
-    errors.push(errorMessage(error));
+    errors.push(`${phase}: ${errorMessage(error)}`);
     if (logId) {
       await supabase.from("scrape_logs").update({
         finished_at: new Date().toISOString(), status: "failed", found_count: stats.found,
-        created_count: stats.created, updated_count: stats.updated, error_message: errors.join("; ").slice(0, 2_000),
+        created_count: stats.created, updated_count: stats.updated,
+        unchanged_count: stats.unchanged, deleted_count: stats.deleted,
+        duplicate_count: stats.duplicates, skipped_count: stats.skipped,
+        request_count: stats.requestCount, fetch_duration_ms: stats.fetchDurationMs,
+        import_duration_ms: stats.importDurationMs, duration_ms: Date.now() - startedAt,
+        error_message: errors.join("; ").slice(0, 2_000),
+        error_details: { errors, recordedAt: new Date().toISOString() },
       }).eq("id", logId);
     }
     return NextResponse.json({ ...stats, deletedLogs, retentionDays, durationMs: Date.now() - startedAt, errors }, { status: 500 });

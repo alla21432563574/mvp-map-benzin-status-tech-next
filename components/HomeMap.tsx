@@ -61,6 +61,7 @@ export default function HomeMap() {
   const [fuels, setFuels] = useState<Set<FilterFuelKey>>(() => initialSet<FilterFuelKey>("fuel"));
   const [brands, setBrands] = useState<Set<string>>(() => initialSet<string>("brand"));
   const [loading, setLoading] = useState(true);
+  const [dataRefreshToken, setDataRefreshToken] = useState(0);
   const [bounds, setBounds] = useState<MapBounds | null>(null);
   const [center, setCenter] = useState<MapPoint>(start.center);
   const [zoom, setZoom] = useState(start.zoom);
@@ -96,6 +97,18 @@ export default function HomeMap() {
   }, []);
 
   useEffect(() => {
+    const refreshVisibleMap = () => {
+      if (document.visibilityState === "visible") setDataRefreshToken((current) => current + 1);
+    };
+    const timer = window.setInterval(refreshVisibleMap, 120_000);
+    document.addEventListener("visibilitychange", refreshVisibleMap);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshVisibleMap);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!bounds) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
@@ -115,7 +128,7 @@ export default function HomeMap() {
       }
     }, 220);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [bounds, zoom]);
+  }, [bounds, dataRefreshToken, zoom]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

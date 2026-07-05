@@ -71,7 +71,7 @@ ADMIN_SECRET=длинный-случайный-пароль
 
 Скрипт `scripts/scrape-benzin-status.ts` не запускает браузер. В nationwide-режиме он обходит Россию сеткой bbox-сегментов и делает прямые HTTP-запросы к публичному REST endpoint `/api/stations`. Cookies, токены и авторизация не нужны. CAPTCHA, Cloudflare и rate limits не обходятся; при HTTP 403/429 запуск останавливается.
 
-Перед первым запуском примените `supabase/migrations/20260703_add_benzin_scraper.sql` в Supabase SQL Editor. Миграция добавляет импортные поля станции, таблицу `scrape_logs` и серверную функцию безопасного обновления. Более свежие ручные статусы не перезаписываются.
+Перед первым запуском примените все миграции из `supabase/migrations` по порядку, включая `20260705_atomic_station_import.sql`. Последняя миграция добавляет staging-таблицу и атомарную финализацию полного снимка. Пакетная загрузка не видна карте до успешного завершения одной транзакции.
 
 Добавьте в `.env.local`:
 
@@ -87,6 +87,9 @@ SCRAPER_MAX_STATIONS_PER_RUN=5000
 SCRAPER_REQUEST_DELAY_MS=250
 SCRAPER_BOUNDS=55.40,36.80,56.10,38.40
 SCRAPER_LOCK_SECONDS=3600
+SCRAPER_MIN_SNAPSHOT_RATIO=0.85
+SCRAPER_MISSING_RUNS_BEFORE_DEACTIVATE=3
+SCRAPE_LOG_RETENTION_DAYS=30
 ```
 
 Для записи нужны `SUPABASE_SERVICE_ROLE_KEY` и URL проекта: `SUPABASE_URL` или уже используемый Next.js `NEXT_PUBLIC_SUPABASE_URL`. Service role ключ не передаётся чужому сайту и используется только после закрытия страницы для записи результата в вашу Supabase. Если переменные отсутствуют или содержат шаблонные значения, scraper продолжит автономную работу и выведет предупреждение без попытки подключения к Supabase.
@@ -113,11 +116,17 @@ pnpm scrape:benzin:debug -- --dry-run
 
 В dry-run все записи печатаются в консоль и сохраняются в `outputs/scraper-debug/results.json`. Этот режим работает даже при `SCRAPER_ENABLED=false`.
 
-Результат проверяется в таблицах `stations` и `scrape_logs`. Для импортированных станций `external_source` равен `benzin-status`, а `imported_at` показывает время последнего просмотра карты. Остановить модуль полностью можно значением `SCRAPER_ENABLED=false`.
+Результат проверяется в таблицах `stations` и `scrape_logs`. Для импортированных станций `external_source` равен `benzin-status`, а `imported_at` показывает время последней успешной финализации снимка. Журнал отдельно хранит `created_count`, `updated_count`, `unchanged_count`, `deleted_count` и `duplicate_count`, а также длительность получения и импорта данных.
+
+Открытая карта повторно запрашивает только текущий bbox раз в две минуты и при возвращении пользователя во вкладку. Поэтому успешно опубликованный снимок появляется без ручного движения карты и без загрузки всей базы.
+
+`external_source + external_key` является каноническим идентификатором. Входные дубли координат сравниваются с точностью 5 знаков, но близкие станции с разными id больше не сливаются по радиусу. Старый timestamp не может заменить более новый. `updated_at` меняется только при реальном изменении полей и не откатывается назад.
+
+Удаление безопасное и отложенное: отсутствующая в полном nationwide-снимке АЗС сначала получает счётчик пропусков и становится неактивной только после `SCRAPER_MISSING_RUNS_BEFORE_DEACTIVATE` полных запусков подряд. Неполный или обрезанный снимок ничего не деактивирует; снимок меньше `SCRAPER_MIN_SNAPSHOT_RATIO` от текущей базы отклоняется целиком. Остановить модуль полностью можно значением `SCRAPER_ENABLED=false`.
 
 ## GitHub Actions: автообновление
 
-Workflow `.github/workflows/scrape.yml` каждые 15 минут запускает nationwide CLI-scraper прямо на GitHub Runner. Интервал выбран так, чтобы полный обход успевал завершиться и не создавал постоянную нагрузку на публичный сайт. Vercel Function в длинном обходе не участвует; защищённый endpoint `GET /api/cron/scrape` остаётся для ручного регионального запуска.
+Workflow `.github/workflows/scrape.yml` запускает nationwide CLI-scraper каждый час на 7-й минуте. Смещение от начала часа уменьшает вероятность задержки GitHub scheduler, а часовой интервал оставляет запас для полного обхода и не создаёт постоянную нагрузку на публичный сайт. Vercel Function в длинном обходе не участвует; защищённый endpoint `GET /api/cron/scrape` остаётся для ручного регионального запуска.
 
 Откройте GitHub Repository → Settings → Secrets and variables → Actions и добавьте:
 

@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-import { BENZIN_SOURCE as SOURCE, fetchBenzinStations, type BenzinScrapeResult, type ScrapedStation } from "../lib/benzin-scraper";
+import { BENZIN_SOURCE as SOURCE, fetchBenzinStations, type BenzinScrapeResult } from "../lib/benzin-scraper";
+import { atomicImportStations } from "../lib/station-import";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -11,7 +12,19 @@ dotenv.config();
 const LOCK_PATH = path.resolve(".scrape-benzin-status.lock");
 const DEBUG_DIR = path.resolve("outputs/scraper-debug");
 
-type RunStats = { found: number; updated: number; created: number; skipped: number };
+type RunStats = {
+  found: number;
+  staged: number;
+  updated: number;
+  created: number;
+  unchanged: number;
+  deleted: number;
+  duplicates: number;
+  skipped: number;
+  requestCount: number;
+  fetchDurationMs: number;
+  importDurationMs: number;
+};
 
 const config = {
   enabled: process.env.SCRAPER_ENABLED === "true",
@@ -28,6 +41,9 @@ const config = {
   gridStepDegrees: Math.max(0.5, Math.min(10, Number(process.env.SCRAPER_GRID_STEP_DEGREES || 4))),
   requestDelayMs: Math.max(100, Math.min(5_000, Number(process.env.SCRAPER_REQUEST_DELAY_MS || 250))),
   lockSeconds: Math.max(600, Math.min(3_600, Number(process.env.SCRAPER_LOCK_SECONDS || 3_600))),
+  minimumSnapshotRatio: Math.max(0.5, Math.min(1, Number(process.env.SCRAPER_MIN_SNAPSHOT_RATIO || 0.85))),
+  missingRunsBeforeDeactivate: Math.max(1, Math.min(20, Number(process.env.SCRAPER_MISSING_RUNS_BEFORE_DEACTIVATE || 3))),
+  logRetentionDays: Math.max(1, Math.min(365, Number(process.env.SCRAPE_LOG_RETENTION_DAYS || 30))),
   supabaseUrl: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
   serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
 };
@@ -123,8 +139,8 @@ async function fetchStations(): Promise<BenzinScrapeResult> {
   });
 }
 
-async function createLog(supabase: SupabaseClient) {
-  const { data, error } = await supabase.from("scrape_logs").insert({ source: SOURCE, status: "running" }).select("id").single();
+async function createLog(supabase: SupabaseClient, runId: string) {
+  const { data, error } = await supabase.from("scrape_logs").insert({ source: SOURCE, status: "running", run_id: runId }).select("id").single();
   if (error) throw error;
   return data.id as string;
 }
@@ -133,38 +149,15 @@ async function finishLog(supabase: SupabaseClient, id: string, status: "success"
   const { error } = await supabase.from("scrape_logs").update({
     finished_at: new Date().toISOString(), status, found_count: stats.found,
     updated_count: stats.updated, created_count: stats.created,
+    unchanged_count: stats.unchanged, deleted_count: stats.deleted,
+    duplicate_count: stats.duplicates, skipped_count: stats.skipped,
+    request_count: stats.requestCount, fetch_duration_ms: stats.fetchDurationMs,
+    import_duration_ms: stats.importDurationMs,
+    duration_ms: stats.fetchDurationMs + stats.importDurationMs,
     error_message: errorMessage?.slice(0, 2_000) ?? null,
+    error_details: errorMessage ? { message: errorMessage, recordedAt: new Date().toISOString() } : null,
   }).eq("id", id);
   if (error) console.error("Не удалось завершить scrape_logs:", error.message);
-}
-
-async function importStations(supabase: SupabaseClient, stations: ScrapedStation[], stats: RunStats) {
-  const batchSize = 100;
-  for (let offset = 0; offset < stations.length; offset += batchSize) {
-    const batch = stations.slice(offset, offset + batchSize).map(({ rawText: _rawText, ...station }) => station);
-    let data: unknown = null;
-    let lastError: unknown = null;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const response = await supabase.rpc("bulk_upsert_scraped_stations", { p_stations: batch });
-      if (!response.error) {
-        data = response.data;
-        lastError = null;
-        break;
-      }
-      lastError = response.error;
-      if (attempt < 3) {
-        const delay = 1_000 * 2 ** (attempt - 1);
-        console.warn(`Supabase batch ${offset + 1}-${offset + batch.length}: ${describeError(lastError)}; retry ${attempt + 1}/3 через ${delay} мс.`);
-        await sleep(delay);
-      }
-    }
-    if (lastError) throw new Error(`Supabase batch ${offset + 1}-${offset + batch.length}: ${describeError(lastError)}`);
-    const batchStats = Array.isArray(data) ? data[0] : data;
-    stats.created += Number(batchStats?.created_count || 0);
-    stats.updated += Number(batchStats?.updated_count || 0);
-    stats.skipped += Number(batchStats?.skipped_count || 0);
-    console.log(`Supabase upsert: ${Math.min(offset + batchSize, stations.length)}/${stations.length}.`);
-  }
 }
 
 async function runOnce() {
@@ -175,7 +168,10 @@ async function runOnce() {
   if (!config.dryRun && !supabase) console.warn("Supabase не настроен, результаты не будут сохранены.");
 
   const lock = await acquireLock();
-  const stats: RunStats = { found: 0, updated: 0, created: 0, skipped: 0 };
+  const stats: RunStats = {
+    found: 0, staged: 0, updated: 0, created: 0, unchanged: 0, deleted: 0,
+    duplicates: 0, skipped: 0, requestCount: 0, fetchDurationMs: 0, importDurationMs: 0,
+  };
   if (!lock) {
     console.log("Scraping пропущен: предыдущий запуск ещё выполняется.");
     return;
@@ -183,6 +179,7 @@ async function runOnce() {
 
   let logId: string | null = null;
   let distributedLockToken: string | null = null;
+  let phase = "lock";
   try {
     if (supabase) {
       const token = randomUUID();
@@ -200,12 +197,18 @@ async function runOnce() {
         return;
       }
       distributedLockToken = token;
-      logId = await createLog(supabase);
+      await supabase.rpc("cleanup_scrape_logs", { p_retention_days: config.logRetentionDays });
+      logId = await createLog(supabase, token);
     }
 
     if (config.debug || config.dryRun) await mkdir(DEBUG_DIR, { recursive: true });
+    phase = "fetch";
+    const fetchStartedAt = Date.now();
     const result = await fetchStations();
+    stats.fetchDurationMs = Date.now() - fetchStartedAt;
     stats.found = result.stations.length;
+    stats.requestCount = result.requestCount;
+    stats.duplicates = result.duplicatesDiscarded;
     if (config.debug || config.dryRun) {
       await writeFile(path.join(DEBUG_DIR, "results.json"), JSON.stringify(result.stations, null, 2), "utf8");
     }
@@ -213,7 +216,28 @@ async function runOnce() {
       console.log("Dry-run: подключение к Supabase отключено. Собранные данные:");
       console.log(JSON.stringify(result.stations, null, 2));
     } else if (supabase) {
-      await importStations(supabase, result.stations, stats);
+      phase = "import";
+      const importStartedAt = Date.now();
+      let imported;
+      try {
+        imported = await atomicImportStations(supabase, result.stations, {
+          runId: distributedLockToken!,
+          source: SOURCE,
+          foundCount: result.stations.length,
+          allowDeactivate: config.mode === "russia" && result.truncatedTiles === 0,
+          minimumSnapshotRatio: config.minimumSnapshotRatio,
+          missingRunsBeforeDeactivate: config.missingRunsBeforeDeactivate,
+          onProgress: (staged, total) => console.log(`Supabase staging: ${staged}/${total}.`),
+        });
+      } finally {
+        stats.importDurationMs = Date.now() - importStartedAt;
+      }
+      stats.staged = imported.staged;
+      stats.created = imported.created;
+      stats.updated = imported.updated;
+      stats.unchanged = imported.unchanged;
+      stats.deleted = imported.deleted;
+      stats.duplicates += imported.duplicates;
     }
 
     const fuelStatuses = result.stations.reduce(
@@ -221,10 +245,11 @@ async function runOnce() {
       0,
     );
     console.log(`Метрики: режим ${config.mode}; HTTP ${result.httpStatus}; запросов ${result.requestCount}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
+    phase = "logging";
     if (supabase && logId) await finishLog(supabase, logId, "success", stats);
-    console.log(`Готово: найдено ${stats.found}, создано ${stats.created}, обновлено ${stats.updated}, пропущено ${stats.skipped}.`);
+    console.log(`Готово: найдено ${stats.found}, создано ${stats.created}, обновлено ${stats.updated}, без изменений ${stats.unchanged}, удалено ${stats.deleted}, дублей ${stats.duplicates}, пропущено ${stats.skipped}.`);
   } catch (error) {
-    const message = describeError(error);
+    const message = `${phase}: ${describeError(error)}`;
     if (supabase && logId) await finishLog(supabase, logId, "failed", stats, message);
     console.error("Scraping завершился с ошибкой:", message);
     if (config.once) process.exitCode = 1;
