@@ -8,6 +8,7 @@ import type { GeometryCollection, Topology } from "topojson-specification";
 
 export const BENZIN_SOURCE = "benzin-status" as const;
 const API_URL = "https://map.benzin-status.tech/api/stations";
+const STATION_DETAIL_URL = "https://map.benzin-status.tech/api/stations";
 const RUSSIA_BOUNDS = { south: 41, west: 19, north: 82, east: -169 };
 const MIN_TILE_STEP = 0.25;
 const atlasTopology = worldAtlas as unknown as Topology;
@@ -38,6 +39,22 @@ export type ScrapedStation = {
   rawText: string;
 };
 
+export type ScrapedReport = {
+  externalId: string;
+  stationExternalKey: string;
+  status: "available" | "partial" | "unavailable" | "unknown";
+  fuelType: string | null;
+  fuelTypes: string[];
+  queue: number | null;
+  queueText: string | null;
+  comment: string | null;
+  isOnSite: boolean | null;
+  isCounted: boolean | null;
+  source: typeof BENZIN_SOURCE;
+  createdAt: string;
+  importedAt: string;
+};
+
 type PublicApiStation = {
   id: number;
   name: string | null;
@@ -51,6 +68,16 @@ type PublicApiStation = {
   q: number | null;
 };
 
+type PublicApiReport = {
+  id: number;
+  status: string;
+  fuelTypes?: unknown;
+  comment?: unknown;
+  createdAt: number;
+  counted?: unknown;
+  geoTrust?: unknown;
+};
+
 type Tile = { south: number; west: number; north: number; east: number; depth: number };
 
 export type BenzinScrapeOptions = {
@@ -62,14 +89,22 @@ export type BenzinScrapeOptions = {
   city: string;
   gridStepDegrees?: number;
   requestDelayMs?: number;
+  reportSinceMs?: number;
+  maxReportStationRequests?: number;
+  reportCursors?: ReadonlyMap<string, number>;
   onProgress?: (progress: { requests: number; tiles: number; stations: number; duplicates: number }) => void;
 };
 
 export type BenzinScrapeResult = {
   stations: ScrapedStation[];
+  reports: ScrapedReport[];
   duplicatesDiscarded: number;
   httpStatus: number;
   requestCount: number;
+  reportRequestCount: number;
+  reportStationCount: number;
+  reportCandidatesSkipped: number;
+  reportCursors: Array<{ stationExternalKey: string; lastReportAt: string }>;
   tilesProcessed: number;
   truncatedTiles: number;
   outsideRussiaDiscarded: number;
@@ -160,6 +195,19 @@ function fuelStatus(raw: PublicApiStation, key: string): FuelStatus {
   return fuels.size ? fuels.has(key) : null;
 }
 
+function reportStatus(status: string): ScrapedReport["status"] {
+  if (status === "available") return "available";
+  if (status === "limited") return "partial";
+  if (status === "none") return "unavailable";
+  return "unknown";
+}
+
+function normalizeFuelTypes(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(["ai92", "ai95", "ai98", "ai100", "dt", "gas"]);
+  return [...new Set(value.filter((fuel): fuel is string => typeof fuel === "string" && allowed.has(fuel)))];
+}
+
 export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise<BenzinScrapeResult> {
   const startedAt = Date.now();
   const mode = options.mode || "city";
@@ -173,12 +221,15 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
 
   const pendingTiles = mode === "russia" ? createGrid(bounds, gridStep).filter(tileIntersectsRussia) : [bounds];
   const stations: ScrapedStation[] = [];
+  const reports: ScrapedReport[] = [];
+  const reportCandidates = new Map<number, number>();
   const ids = new Set<number>();
   const coordinates = new Set<string>();
   const nameAddresses = new Set<string>();
   const importedAt = new Date().toISOString();
   let duplicatesDiscarded = 0;
   let requestCount = 0;
+  let reportRequestCount = 0;
   let tilesProcessed = 0;
   let truncatedTiles = 0;
   let outsideRussiaDiscarded = 0;
@@ -193,7 +244,7 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
     url.searchParams.set("center", `${(tile.west + tile.east) / 2},${(tile.south + tile.north) / 2}`);
     return withRetry(async () => {
       const response = await fetch(url, {
-        headers: { accept: "application/json", "user-agent": "benzin-status-mvp-scraper/1.0 (+low-rate public-data import)" },
+        headers: { accept: "application/json", referer: "https://map.benzin-status.tech/", "user-agent": "Mozilla/5.0 (compatible; benzin-status-mvp/1.0; low-rate public-data import)" },
         signal: AbortSignal.timeout(30_000),
       });
       if (response.status === 403 || response.status === 429) {
@@ -244,14 +295,68 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
         sourceUpdatedAt: raw.lastReportAt ? new Date(raw.lastReportAt).toISOString() : null,
         importedAt, rawText: JSON.stringify(raw),
       });
+      const reportCursor = options.reportCursors?.get(String(raw.id));
+      if (raw.lastReportAt != null && (reportCursor == null
+        ? raw.lastReportAt >= (options.reportSinceMs ?? Date.now() - 2 * 60 * 60 * 1_000)
+        : raw.lastReportAt > reportCursor)) {
+        reportCandidates.set(raw.id, raw.lastReportAt);
+      }
     }
     if (requestCount % 25 === 0 || pendingTiles.length === 0) {
       options.onProgress?.({ requests: requestCount, tiles: tilesProcessed, stations: stations.length, duplicates: duplicatesDiscarded });
     }
   }
 
+  const candidates = [...reportCandidates.entries()].sort((left, right) => left[1] - right[1]);
+  const reportRequestLimit = Math.max(1, Math.min(10_000, options.maxReportStationRequests ?? 2_000));
+  const processedCandidates = candidates.slice(0, reportRequestLimit);
+  for (const [stationId] of processedCandidates) {
+    await sleep(requestDelayMs);
+    reportRequestCount += 1;
+    const detail = await withRetry(async () => {
+      const response = await fetch(`${STATION_DETAIL_URL}/${stationId}`, {
+        headers: { accept: "application/json", referer: "https://map.benzin-status.tech/", "user-agent": "Mozilla/5.0 (compatible; benzin-status-mvp/1.0; low-rate public-data import)" },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (response.status === 403 || response.status === 429) {
+        throw new ProtectionDetectedError(`Сайт вернул HTTP ${response.status}; scraper остановлен без обхода защиты.`);
+      }
+      if (!response.ok) throw new Error(`Публичный station detail API вернул HTTP ${response.status}`);
+      return response.json() as Promise<{ reports?: unknown }>;
+    });
+    if (!Array.isArray(detail.reports)) continue;
+    for (const rawReport of detail.reports as PublicApiReport[]) {
+      if (!Number.isFinite(rawReport.id) || !Number.isFinite(rawReport.createdAt)) continue;
+      const stationCursor = options.reportCursors?.get(String(stationId));
+      const stationCutoff = stationCursor ?? options.reportSinceMs ?? Date.now() - 2 * 60 * 60 * 1_000;
+      if (stationCursor == null ? rawReport.createdAt < stationCutoff : rawReport.createdAt <= stationCutoff) continue;
+      const fuelTypes = normalizeFuelTypes(rawReport.fuelTypes);
+      reports.push({
+        externalId: String(rawReport.id),
+        stationExternalKey: String(stationId),
+        status: reportStatus(rawReport.status),
+        fuelType: fuelTypes.length === 1 ? fuelTypes[0] : null,
+        fuelTypes,
+        queue: null,
+        queueText: null,
+        comment: typeof rawReport.comment === "string" && rawReport.comment.trim() ? rawReport.comment.trim() : null,
+        isOnSite: rawReport.geoTrust === "near" ? true : typeof rawReport.geoTrust === "string" ? false : null,
+        isCounted: typeof rawReport.counted === "boolean" ? rawReport.counted : null,
+        source: BENZIN_SOURCE,
+        createdAt: new Date(rawReport.createdAt).toISOString(),
+        importedAt,
+      });
+    }
+  }
+
+  const uniqueReports = [...new Map(reports.map((report) => [report.externalId, report])).values()];
+
   return {
-    stations, duplicatesDiscarded, httpStatus: 200, requestCount, tilesProcessed, truncatedTiles, outsideRussiaDiscarded,
+    stations, reports: uniqueReports, duplicatesDiscarded, httpStatus: 200, requestCount,
+    reportRequestCount, reportStationCount: processedCandidates.length,
+    reportCandidatesSkipped: candidates.length - processedCandidates.length,
+    reportCursors: processedCandidates.map(([stationId, lastReportAt]) => ({ stationExternalKey: String(stationId), lastReportAt: new Date(lastReportAt).toISOString() })),
+    tilesProcessed, truncatedTiles, outsideRussiaDiscarded,
     durationMs: Date.now() - startedAt,
   };
 }

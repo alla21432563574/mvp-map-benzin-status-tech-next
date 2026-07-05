@@ -206,6 +206,37 @@ $$;
 revoke all on function public.upsert_scraped_station(text, text, text, double precision, double precision, text, boolean, boolean, boolean, boolean, boolean, text, text, timestamptz, timestamptz) from public, anon, authenticated;
 grant execute on function public.upsert_scraped_station(text, text, text, double precision, double precision, text, boolean, boolean, boolean, boolean, boolean, text, text, timestamptz, timestamptz) to service_role;
 
+create table if not exists public.station_reports (
+  id uuid primary key default gen_random_uuid(),
+  station_id uuid not null references public.stations(id) on delete cascade,
+  external_id text not null,
+  status text not null check (status in ('available', 'partial', 'unavailable', 'unknown')),
+  fuel_type text,
+  fuel_types text[],
+  queue integer check (queue is null or queue >= 0),
+  queue_text text,
+  comment text,
+  is_on_site boolean,
+  source text not null,
+  is_counted boolean,
+  created_at timestamptz not null,
+  imported_at timestamptz not null default now(),
+  unique (source, external_id)
+);
+create index if not exists station_reports_station_created_idx on public.station_reports(station_id, created_at desc);
+alter table public.station_reports enable row level security;
+create policy "Public station reports are readable" on public.station_reports for select using (true);
+grant select on table public.station_reports to anon, authenticated;
+
+create table if not exists public.station_report_sync (
+  source text not null,
+  station_external_key text not null,
+  last_report_at timestamptz not null,
+  checked_at timestamptz not null default now(),
+  primary key (source, station_external_key)
+);
+alter table public.station_report_sync enable row level security;
+
 insert into public.stations (city, name, address, latitude, longitude, brand, ai92, ai95, diesel, gas, update_source) values
 ('Москва', 'АЗС Луговая', 'ул. Луговая, 18', 55.7557, 37.6175, 'Энергия', true, true, true, false, 'Оператор АЗС'),
 ('Москва', 'АЗС Садовое кольцо', 'ул. Земляной Вал, 42', 55.7507, 37.6592, 'Пульс', true, false, true, null, 'Пользователь'),

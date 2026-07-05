@@ -53,15 +53,30 @@ export type StationHistoryEntry = {
   label: string;
   confirmed_at: string;
   source: string;
+  fuel_type?: string | null;
+  fuel_types?: string[];
+  queue?: number | null;
+  queue_text?: string | null;
+  comment?: string | null;
+  is_on_site?: boolean | null;
+};
+
+export type StationReportSummary = {
+  available: number;
+  unavailable: number;
+  partial: number;
+  on_site: number;
 };
 
 export type StationDetails = {
   confidence: number;
+  confidence_status?: "calculated" | "insufficient";
   confirmation_count: number;
   unique_confirmers: number;
   last_confirmation_at: string;
   source: string;
   history: StationHistoryEntry[];
+  last_hour_summary?: StationReportSummary;
   factors: {
     freshness: number;
     confirmations: number;

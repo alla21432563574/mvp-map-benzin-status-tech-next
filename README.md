@@ -85,6 +85,8 @@ SCRAPER_CITY_CENTER_LNG=37.6173
 SCRAPER_GRID_STEP_DEGREES=4
 SCRAPER_MAX_STATIONS_PER_RUN=5000
 SCRAPER_REQUEST_DELAY_MS=250
+SCRAPER_REPORT_LOOKBACK_HOURS=2
+SCRAPER_MAX_REPORT_STATIONS=2000
 SCRAPER_BOUNDS=55.40,36.80,56.10,38.40
 SCRAPER_LOCK_SECONDS=3600
 SCRAPER_MIN_SNAPSHOT_RATIO=0.85
@@ -108,6 +110,8 @@ npm run scrape:benzin:debug
 
 `SCRAPER_MODE=russia` обходит территорию 41…82° с.ш. и долготы `19…180` плюс `-180…-169` для Чукотки. Тайл, достигший API-лимита, рекурсивно делится на четыре. `SCRAPER_GRID_STEP_DEGREES` задаёт начальный шаг, `SCRAPER_REQUEST_DELAY_MS` — паузу, а `SCRAPER_MAX_STATIONS_PER_RUN` — лимит одного API-ответа. Дубли удаляются по id, координатам и паре название+адрес. `SCRAPER_MODE=city` сохраняет прежний режим `SCRAPER_BOUNDS`.
 
+После снимка станций scraper запрашивает публичную карточку только у АЗС, где `lastReportAt` новее персонального курсора в `station_report_sync`. Из `/api/stations/{id}` импортируются реальные ID отметок, статусы, виды топлива, комментарии и GPS-признак `near`; отсутствующие комментарии и непривязанная к отметке очередь не синтезируются. Первый запуск смотрит назад на `SCRAPER_REPORT_LOOKBACK_HOURS`, а `SCRAPER_MAX_REPORT_STATIONS` ограничивает число detail-запросов за запуск. Не поместившиеся станции остаются без сдвига курсора и автоматически обрабатываются в следующих запусках. Повторные ID отбрасываются уникальным ключом `(source, external_id)` в `station_reports`.
+
 Полностью автономная проверка без создания Supabase-клиента и любых запросов к базе:
 
 ```bash
@@ -116,7 +120,7 @@ pnpm scrape:benzin:debug -- --dry-run
 
 В dry-run все записи печатаются в консоль и сохраняются в `outputs/scraper-debug/results.json`. Этот режим работает даже при `SCRAPER_ENABLED=false`.
 
-Результат проверяется в таблицах `stations` и `scrape_logs`. Для импортированных станций `external_source` равен `benzin-status`, а `imported_at` показывает время последней успешной финализации снимка. Журнал отдельно хранит `created_count`, `updated_count`, `unchanged_count`, `deleted_count` и `duplicate_count`, а также длительность получения и импорта данных.
+Результат проверяется в таблицах `stations`, `station_reports` и `scrape_logs`. Для импортированных станций `external_source` равен `benzin-status`, а `imported_at` показывает время последней успешной финализации снимка. Журнал отдельно хранит статистику станций и `reports_found_count`, `reports_created_count`, `reports_unchanged_count`, `report_request_count`. Последние 20 отметок доступны через `GET /api/stations/{id}/reports`; ответ также содержит сводку за час и честный процент согласованности последних десяти отметок.
 
 Открытая карта повторно запрашивает только текущий bbox раз в две минуты и при возвращении пользователя во вкладку. Поэтому успешно опубликованный снимок появляется без ручного движения карты и без загрузки всей базы.
 

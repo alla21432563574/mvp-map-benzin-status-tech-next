@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ScrapedStation } from "./benzin-scraper";
+import type { ScrapedReport, ScrapedStation } from "./benzin-scraper";
 
 export type AtomicImportStats = {
   found: number;
@@ -20,6 +20,13 @@ type AtomicImportOptions = {
   missingRunsBeforeDeactivate?: number;
   batchSize?: number;
   onProgress?: (staged: number, total: number) => void;
+};
+
+export type ReportImportStats = {
+  found: number;
+  created: number;
+  unchanged: number;
+  missingStations: number;
 };
 
 function errorDescription(error: unknown) {
@@ -112,5 +119,66 @@ export async function atomicImportStations(
       throw new Error(`${errorDescription(error)}; staging cleanup failed: ${errorDescription(cleanupError)}`);
     }
     throw error;
+  }
+}
+
+export async function importStationReports(
+  supabase: SupabaseClient,
+  reports: ScrapedReport[],
+  source: string,
+  batchSize = 500,
+): Promise<ReportImportStats> {
+  const total: ReportImportStats = { found: 0, created: 0, unchanged: 0, missingStations: 0 };
+  const size = Math.max(100, Math.min(1_000, batchSize));
+  for (let offset = 0; offset < reports.length; offset += size) {
+    const payload = reports.slice(offset, offset + size).map((report) => ({
+      external_id: report.externalId,
+      station_external_key: report.stationExternalKey,
+      status: report.status,
+      fuel_type: report.fuelType,
+      fuel_types: report.fuelTypes,
+      queue: report.queue,
+      queue_text: report.queueText,
+      comment: report.comment,
+      is_on_site: report.isOnSite,
+      is_counted: report.isCounted,
+      created_at: report.createdAt,
+    }));
+    const { data, error } = await supabase.rpc("import_station_reports", { p_source: source, p_reports: payload });
+    if (error) throw new Error(`Report import failed: ${errorDescription(error)}`);
+    const row = (Array.isArray(data) ? data[0] : data || {}) as Record<string, unknown>;
+    total.found += Number(row.found_count || 0);
+    total.created += Number(row.created_count || 0);
+    total.unchanged += Number(row.unchanged_count || 0);
+    total.missingStations += Number(row.missing_station_count || 0);
+  }
+  return total;
+}
+
+export async function loadStationReportCursors(supabase: SupabaseClient, source: string) {
+  const cursors = new Map<string, number>();
+  for (let offset = 0; ; offset += 1_000) {
+    const { data, error } = await supabase.from("station_report_sync")
+      .select("station_external_key,last_report_at").eq("source", source)
+      .range(offset, offset + 999);
+    if (error) throw new Error(`Report cursor load failed: ${errorDescription(error)}`);
+    for (const row of data || []) cursors.set(row.station_external_key, new Date(row.last_report_at).getTime());
+    if (!data || data.length < 1_000) break;
+  }
+  return cursors;
+}
+
+export async function syncStationReportCursors(
+  supabase: SupabaseClient,
+  source: string,
+  cursors: Array<{ stationExternalKey: string; lastReportAt: string }>,
+) {
+  for (let offset = 0; offset < cursors.length; offset += 1_000) {
+    const payload = cursors.slice(offset, offset + 1_000).map((cursor) => ({
+      station_external_key: cursor.stationExternalKey,
+      last_report_at: cursor.lastReportAt,
+    }));
+    const { error } = await supabase.rpc("sync_station_report_cursors", { p_source: source, p_stations: payload });
+    if (error) throw new Error(`Report cursor sync failed: ${errorDescription(error)}`);
   }
 }

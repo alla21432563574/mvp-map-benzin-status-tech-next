@@ -163,18 +163,29 @@ export default function HomeMap() {
     const controller = new AbortController();
     setStationDetails(null);
     setDetailsLoading(true);
-    fetch(`/api/stations/${selectedStationId}/details`, { signal: controller.signal })
+    fetch(`/api/stations/${selectedStationId}/reports`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Не удалось загрузить детали АЗС");
-        setStationDetails(data.details ?? null);
+        const reports = Array.isArray(data.reports) ? data.reports : [];
+        setStationDetails({
+          confidence: Number(data.confidence || 0),
+          confidence_status: data.status === "calculated" ? "calculated" : "insufficient",
+          confirmation_count: reports.length,
+          unique_confirmers: 0,
+          last_confirmation_at: reports[0]?.confirmed_at || selected?.updated_at || new Date().toISOString(),
+          source: reports[0]?.source || selected?.update_source || "benzin-status",
+          history: reports,
+          last_hour_summary: data.summary,
+          factors: { freshness: 0, confirmations: 0, consistency: Number(data.confidence || 0) / 100, confirmers: 0, coverage: 0 },
+        });
       })
       .catch((error) => {
         if (error instanceof Error && error.name !== "AbortError") setStationDetails(null);
       })
       .finally(() => { if (!controller.signal.aborted) setDetailsLoading(false); });
     return () => controller.abort();
-  }, [selectedStationId]);
+  }, [selected?.update_source, selected?.updated_at, selectedStationId]);
 
   const handleBoundsChange = useCallback((nextBounds: MapBounds) => {
     setBounds((current) => current && current.west === nextBounds.west && current.south === nextBounds.south && current.east === nextBounds.east && current.north === nextBounds.north ? current : nextBounds);

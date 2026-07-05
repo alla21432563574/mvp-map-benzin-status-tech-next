@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { BENZIN_SOURCE, fetchBenzinStations } from "@/lib/benzin-scraper";
-import { atomicImportStations } from "@/lib/station-import";
+import { atomicImportStations, importStationReports, loadStationReportCursors, syncStationReportCursors } from "@/lib/station-import";
 import { createAdminClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -20,6 +20,10 @@ type Stats = {
   requestCount: number;
   fetchDurationMs: number;
   importDurationMs: number;
+  reportsFound: number;
+  reportsCreated: number;
+  reportsUnchanged: number;
+  reportRequestCount: number;
 };
 
 function authorized(request: Request) {
@@ -81,6 +85,7 @@ export async function GET(request: Request) {
   const stats: Stats = {
     found: 0, staged: 0, created: 0, updated: 0, unchanged: 0, deleted: 0,
     duplicates: 0, skipped: 0, requestCount: 0, fetchDurationMs: 0, importDurationMs: 0,
+    reportsFound: 0, reportsCreated: 0, reportsUnchanged: 0, reportRequestCount: 0,
   };
   let phase = "logging";
   try {
@@ -90,6 +95,15 @@ export async function GET(request: Request) {
     logId = log.id as string;
 
     const scraperMode = process.env.SCRAPER_MODE === "russia" ? "russia" as const : "city" as const;
+    const reportLookbackHours = numberInRange(process.env.SCRAPER_REPORT_LOOKBACK_HOURS, 2, 1, 168);
+    let reportSinceMs = Date.now() - reportLookbackHours * 60 * 60 * 1_000;
+    let previousRunQuery = supabase.from("scrape_logs")
+      .select("started_at").eq("source", BENZIN_SOURCE).eq("status", "success");
+    if (scraperMode === "russia") previousRunQuery = previousRunQuery.gte("found_count", 10_000);
+    const { data: previousRun } = await previousRunQuery.order("started_at", { ascending: false }).limit(1).maybeSingle();
+    if (previousRun?.started_at) reportSinceMs = new Date(previousRun.started_at).getTime() - 5 * 60 * 1_000;
+    const reportCursors = await loadStationReportCursors(supabase, BENZIN_SOURCE);
+
     phase = "fetch";
     const fetchStartedAt = Date.now();
     const result = await fetchBenzinStations({
@@ -101,10 +115,16 @@ export async function GET(request: Request) {
       city: process.env.SCRAPER_CITY || "Москва",
       gridStepDegrees: numberInRange(process.env.SCRAPER_GRID_STEP_DEGREES, 4, 0.5, 10),
       requestDelayMs: numberInRange(process.env.SCRAPER_REQUEST_DELAY_MS, 250, 100, 5_000),
+      reportSinceMs,
+      maxReportStationRequests: numberInRange(process.env.SCRAPER_MAX_REPORT_STATIONS, 2_000, 1, 10_000),
+      reportCursors,
     });
     stats.fetchDurationMs = Date.now() - fetchStartedAt;
     stats.found = result.stations.length;
     stats.requestCount = result.requestCount;
+    stats.reportRequestCount = result.reportRequestCount;
+    stats.reportsFound = result.reports.length;
+    stats.skipped = result.reportCandidatesSkipped;
     stats.duplicates = result.duplicatesDiscarded;
 
     phase = "import";
@@ -128,6 +148,11 @@ export async function GET(request: Request) {
     stats.unchanged = imported.unchanged;
     stats.deleted = imported.deleted;
     stats.duplicates += imported.duplicates;
+    const importedReports = await importStationReports(supabase, result.reports, BENZIN_SOURCE);
+    stats.reportsCreated = importedReports.created;
+    stats.reportsUnchanged = importedReports.unchanged;
+    if (importedReports.missingStations) errors.push(`Reports without station: ${importedReports.missingStations}`);
+    await syncStationReportCursors(supabase, BENZIN_SOURCE, result.reportCursors);
 
     phase = "logging";
     const { error: finishError } = await supabase.from("scrape_logs").update({
@@ -137,6 +162,8 @@ export async function GET(request: Request) {
       duplicate_count: stats.duplicates, skipped_count: stats.skipped,
       request_count: stats.requestCount, fetch_duration_ms: stats.fetchDurationMs,
       import_duration_ms: stats.importDurationMs, duration_ms: Date.now() - startedAt,
+      reports_found_count: stats.reportsFound, reports_created_count: stats.reportsCreated,
+      reports_unchanged_count: stats.reportsUnchanged, report_request_count: stats.reportRequestCount,
       error_message: errors.length ? errors.join("; ").slice(0, 2_000) : null,
       error_details: errors.length ? { errors, recordedAt: new Date().toISOString() } : null,
     }).eq("id", logId);
@@ -152,6 +179,8 @@ export async function GET(request: Request) {
         duplicate_count: stats.duplicates, skipped_count: stats.skipped,
         request_count: stats.requestCount, fetch_duration_ms: stats.fetchDurationMs,
         import_duration_ms: stats.importDurationMs, duration_ms: Date.now() - startedAt,
+        reports_found_count: stats.reportsFound, reports_created_count: stats.reportsCreated,
+        reports_unchanged_count: stats.reportsUnchanged, report_request_count: stats.reportRequestCount,
         error_message: errors.join("; ").slice(0, 2_000),
         error_details: { errors, recordedAt: new Date().toISOString() },
       }).eq("id", logId);

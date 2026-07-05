@@ -67,7 +67,9 @@ export function calculateStationConfidence(station: Station, signal: RankingSign
     confirmers: Math.min(1, uniqueConfirmers / 5),
     coverage: knownFuelCount / 6,
   };
-  const confidence = Math.round(100 * (factors.freshness * 0.4 + factors.confirmations * 0.25 + factors.consistency * 0.15 + factors.confirmers * 0.1 + factors.coverage * 0.1));
+  // Процент — не эвристическая «магия», а доля совпавших статусов среди
+  // последних реальных отметок. Без двух отметок точность не показывается.
+  const confidence = confirmationCount > 1 ? Math.round(factors.consistency * 100) : 0;
   return { confidence: Math.max(0, Math.min(100, confidence)), factors };
 }
 

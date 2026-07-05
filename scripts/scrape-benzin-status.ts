@@ -4,7 +4,7 @@ import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import { BENZIN_SOURCE as SOURCE, fetchBenzinStations, type BenzinScrapeResult } from "../lib/benzin-scraper";
-import { atomicImportStations } from "../lib/station-import";
+import { atomicImportStations, importStationReports, loadStationReportCursors, syncStationReportCursors } from "../lib/station-import";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -24,6 +24,10 @@ type RunStats = {
   requestCount: number;
   fetchDurationMs: number;
   importDurationMs: number;
+  reportsFound: number;
+  reportsCreated: number;
+  reportsUnchanged: number;
+  reportRequestCount: number;
 };
 
 const config = {
@@ -40,6 +44,8 @@ const config = {
   bounds: process.env.SCRAPER_BOUNDS || "55.40,36.80,56.10,38.40",
   gridStepDegrees: Math.max(0.5, Math.min(10, Number(process.env.SCRAPER_GRID_STEP_DEGREES || 4))),
   requestDelayMs: Math.max(100, Math.min(5_000, Number(process.env.SCRAPER_REQUEST_DELAY_MS || 250))),
+  reportLookbackHours: Math.max(1, Math.min(168, Number(process.env.SCRAPER_REPORT_LOOKBACK_HOURS || 2))),
+  maxReportStationRequests: Math.max(1, Math.min(10_000, Number(process.env.SCRAPER_MAX_REPORT_STATIONS || 2_000))),
   lockSeconds: Math.max(600, Math.min(3_600, Number(process.env.SCRAPER_LOCK_SECONDS || 3_600))),
   minimumSnapshotRatio: Math.max(0.5, Math.min(1, Number(process.env.SCRAPER_MIN_SNAPSHOT_RATIO || 0.85))),
   missingRunsBeforeDeactivate: Math.max(1, Math.min(20, Number(process.env.SCRAPER_MISSING_RUNS_BEFORE_DEACTIVATE || 3))),
@@ -123,7 +129,7 @@ async function releaseLock(handle: FileHandle | null) {
   await rm(LOCK_PATH, { force: true }).catch(() => undefined);
 }
 
-async function fetchStations(): Promise<BenzinScrapeResult> {
+async function fetchStations(reportSinceMs: number, reportCursors: ReadonlyMap<string, number>): Promise<BenzinScrapeResult> {
   return fetchBenzinStations({
     bounds: config.bounds,
     mode: config.mode,
@@ -133,6 +139,9 @@ async function fetchStations(): Promise<BenzinScrapeResult> {
     city: config.city,
     gridStepDegrees: config.gridStepDegrees,
     requestDelayMs: config.requestDelayMs,
+    reportSinceMs,
+    maxReportStationRequests: config.maxReportStationRequests,
+    reportCursors,
     onProgress: ({ requests, tiles, stations, duplicates }) => {
       console.log(`Прогресс: запросов ${requests}, тайлов ${tiles}, АЗС ${stations}, дублей ${duplicates}.`);
     },
@@ -154,6 +163,10 @@ async function finishLog(supabase: SupabaseClient, id: string, status: "success"
     request_count: stats.requestCount, fetch_duration_ms: stats.fetchDurationMs,
     import_duration_ms: stats.importDurationMs,
     duration_ms: stats.fetchDurationMs + stats.importDurationMs,
+    reports_found_count: stats.reportsFound,
+    reports_created_count: stats.reportsCreated,
+    reports_unchanged_count: stats.reportsUnchanged,
+    report_request_count: stats.reportRequestCount,
     error_message: errorMessage?.slice(0, 2_000) ?? null,
     error_details: errorMessage ? { message: errorMessage, recordedAt: new Date().toISOString() } : null,
   }).eq("id", id);
@@ -171,6 +184,7 @@ async function runOnce() {
   const stats: RunStats = {
     found: 0, staged: 0, updated: 0, created: 0, unchanged: 0, deleted: 0,
     duplicates: 0, skipped: 0, requestCount: 0, fetchDurationMs: 0, importDurationMs: 0,
+    reportsFound: 0, reportsCreated: 0, reportsUnchanged: 0, reportRequestCount: 0,
   };
   if (!lock) {
     console.log("Scraping пропущен: предыдущий запуск ещё выполняется.");
@@ -179,6 +193,8 @@ async function runOnce() {
 
   let logId: string | null = null;
   let distributedLockToken: string | null = null;
+  let reportSinceMs = Date.now() - config.reportLookbackHours * 60 * 60 * 1_000;
+  let reportCursors = new Map<string, number>();
   let phase = "lock";
   try {
     if (supabase) {
@@ -198,23 +214,34 @@ async function runOnce() {
       }
       distributedLockToken = token;
       await supabase.rpc("cleanup_scrape_logs", { p_retention_days: config.logRetentionDays });
+      let previousRunQuery = supabase.from("scrape_logs")
+        .select("started_at").eq("source", SOURCE).eq("status", "success");
+      if (config.mode === "russia") previousRunQuery = previousRunQuery.gte("found_count", 10_000);
+      const { data: previousRun } = await previousRunQuery.order("started_at", { ascending: false }).limit(1).maybeSingle();
+      if (previousRun?.started_at) reportSinceMs = new Date(previousRun.started_at).getTime() - 5 * 60 * 1_000;
+      reportCursors = await loadStationReportCursors(supabase, SOURCE);
       logId = await createLog(supabase, token);
     }
 
     if (config.debug || config.dryRun) await mkdir(DEBUG_DIR, { recursive: true });
     phase = "fetch";
     const fetchStartedAt = Date.now();
-    const result = await fetchStations();
+    const result = await fetchStations(reportSinceMs, reportCursors);
     stats.fetchDurationMs = Date.now() - fetchStartedAt;
     stats.found = result.stations.length;
     stats.requestCount = result.requestCount;
+    stats.reportRequestCount = result.reportRequestCount;
+    stats.reportsFound = result.reports.length;
+    stats.skipped = result.reportCandidatesSkipped;
     stats.duplicates = result.duplicatesDiscarded;
     if (config.debug || config.dryRun) {
       await writeFile(path.join(DEBUG_DIR, "results.json"), JSON.stringify(result.stations, null, 2), "utf8");
+      await writeFile(path.join(DEBUG_DIR, "reports.json"), JSON.stringify(result.reports, null, 2), "utf8");
     }
     if (config.dryRun) {
       console.log("Dry-run: подключение к Supabase отключено. Собранные данные:");
       console.log(JSON.stringify(result.stations, null, 2));
+      console.log(`Последних отметок: ${result.reports.length}. Они сохранены в ${path.join(DEBUG_DIR, "reports.json")}.`);
     } else if (supabase) {
       phase = "import";
       const importStartedAt = Date.now();
@@ -238,16 +265,23 @@ async function runOnce() {
       stats.unchanged = imported.unchanged;
       stats.deleted = imported.deleted;
       stats.duplicates += imported.duplicates;
+      const importedReports = await importStationReports(supabase, result.reports, SOURCE);
+      stats.reportsCreated = importedReports.created;
+      stats.reportsUnchanged = importedReports.unchanged;
+      if (importedReports.missingStations) {
+        console.warn(`Отметок без найденной АЗС: ${importedReports.missingStations}.`);
+      }
+      await syncStationReportCursors(supabase, SOURCE, result.reportCursors);
     }
 
     const fuelStatuses = result.stations.reduce(
       (total, station) => total + [station.ai92, station.ai95, station.diesel, station.gas].filter((value) => value !== null).length,
       0,
     );
-    console.log(`Метрики: режим ${config.mode}; HTTP ${result.httpStatus}; запросов ${result.requestCount}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
+    console.log(`Метрики: режим ${config.mode}; HTTP ${result.httpStatus}; запросов станций ${result.requestCount}; запросов истории ${result.reportRequestCount}; отложено карточек истории ${result.reportCandidatesSkipped}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; отметок найдено ${result.reports.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
     phase = "logging";
     if (supabase && logId) await finishLog(supabase, logId, "success", stats);
-    console.log(`Готово: найдено ${stats.found}, создано ${stats.created}, обновлено ${stats.updated}, без изменений ${stats.unchanged}, удалено ${stats.deleted}, дублей ${stats.duplicates}, пропущено ${stats.skipped}.`);
+    console.log(`Готово: найдено ${stats.found}, создано ${stats.created}, обновлено ${stats.updated}, без изменений ${stats.unchanged}, удалено ${stats.deleted}, дублей ${stats.duplicates}; отметок новых ${stats.reportsCreated}, повторных ${stats.reportsUnchanged}.`);
   } catch (error) {
     const message = `${phase}: ${describeError(error)}`;
     if (supabase && logId) await finishLog(supabase, logId, "failed", stats, message);
