@@ -30,6 +30,10 @@ type RunStats = {
   reportRequestCount: number;
   reportsSkipped: number;
   reportsErrors: string[];
+  stationStatusAvailable: number;
+  stationStatusPartial: number;
+  stationStatusUnavailable: number;
+  stationStatusUnknown: number;
 };
 
 const config = {
@@ -70,6 +74,19 @@ function describeError(error: unknown) {
     return [details.code, details.message, details.details, details.hint].filter(Boolean).join(": ") || JSON.stringify(error);
   }
   return String(error);
+}
+
+function countStationStatuses(stations: BenzinScrapeResult["stations"]) {
+  return stations.reduce(
+    (counts, station) => {
+      if (station.stationStatus === "available") counts.available += 1;
+      else if (station.stationStatus === "partial") counts.partial += 1;
+      else if (station.stationStatus === "unavailable") counts.unavailable += 1;
+      else counts.unknown += 1;
+      return counts;
+    },
+    { available: 0, partial: 0, unavailable: 0, unknown: 0 },
+  );
 }
 
 function parseBounds() {
@@ -173,6 +190,10 @@ async function finishLog(supabase: SupabaseClient, id: string, status: "success"
     report_request_count: stats.reportRequestCount,
     reports_skipped_count: stats.reportsSkipped,
     reports_error_count: stats.reportsErrors.length,
+    station_status_available_count: stats.stationStatusAvailable,
+    station_status_partial_count: stats.stationStatusPartial,
+    station_status_unavailable_count: stats.stationStatusUnavailable,
+    station_status_unknown_count: stats.stationStatusUnknown,
     reports_errors: stats.reportsErrors.length ? stats.reportsErrors.slice(0, 100) : null,
     error_message: errorMessage?.slice(0, 2_000) ?? null,
     error_details: errorMessage ? { message: errorMessage, recordedAt: new Date().toISOString() } : null,
@@ -193,6 +214,7 @@ async function runOnce() {
     duplicates: 0, skipped: 0, requestCount: 0, fetchDurationMs: 0, importDurationMs: 0,
     reportsFound: 0, reportsCreated: 0, reportsUnchanged: 0, reportRequestCount: 0,
     reportsSkipped: 0, reportsErrors: [],
+    stationStatusAvailable: 0, stationStatusPartial: 0, stationStatusUnavailable: 0, stationStatusUnknown: 0,
   };
   if (!lock) {
     console.log("Scraping пропущен: предыдущий запуск ещё выполняется.");
@@ -244,6 +266,11 @@ async function runOnce() {
     stats.reportsSkipped = result.reportCandidatesSkipped;
     stats.reportsErrors = result.reportErrors;
     stats.duplicates = result.duplicatesDiscarded;
+    const statusCounts = countStationStatuses(result.stations);
+    stats.stationStatusAvailable = statusCounts.available;
+    stats.stationStatusPartial = statusCounts.partial;
+    stats.stationStatusUnavailable = statusCounts.unavailable;
+    stats.stationStatusUnknown = statusCounts.unknown;
     if (config.debug || config.dryRun) {
       await writeFile(path.join(DEBUG_DIR, "results.json"), JSON.stringify(result.stations, null, 2), "utf8");
       await writeFile(path.join(DEBUG_DIR, "reports.json"), JSON.stringify(result.reports, null, 2), "utf8");
@@ -288,7 +315,7 @@ async function runOnce() {
       (total, station) => total + [station.ai92, station.ai95, station.diesel, station.gas].filter((value) => value !== null).length,
       0,
     );
-    console.log(`Метрики: режим ${config.mode}; режим отметок ${config.reportsMode}; HTTP ${result.httpStatus}; запросов станций ${result.requestCount}; запросов истории ${result.reportRequestCount}; отложено карточек истории ${result.reportCandidatesSkipped}; ошибок истории ${result.reportErrors.length}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; отметок найдено ${result.reports.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
+    console.log(`Метрики: режим ${config.mode}; режим отметок ${config.reportsMode}; HTTP ${result.httpStatus}; запросов станций ${result.requestCount}; запросов истории ${result.reportRequestCount}; отложено карточек истории ${result.reportCandidatesSkipped}; ошибок истории ${result.reportErrors.length}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; отметок найдено ${result.reports.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; station_status available ${stats.stationStatusAvailable}, partial ${stats.stationStatusPartial}, unavailable ${stats.stationStatusUnavailable}, unknown ${stats.stationStatusUnknown}; время ${result.durationMs} мс.`);
     if (result.reportErrors.length) console.warn(`Ошибки истории:\n${result.reportErrors.slice(0, 20).join("\n")}`);
     phase = "logging";
     if (supabase && logId) await finishLog(supabase, logId, "success", stats);

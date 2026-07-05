@@ -85,6 +85,11 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   transition: transform .18s ease;
 }
 
+.station-cluster.marker-green { background: #238a55; box-shadow: 0 6px 20px rgba(23, 35, 28, .3), 0 0 0 8px rgba(35, 138, 85, .16); }
+.station-cluster.marker-amber { background: #e7a92f; box-shadow: 0 6px 20px rgba(23, 35, 28, .3), 0 0 0 8px rgba(231, 169, 47, .18); }
+.station-cluster.marker-red { background: #da554a; box-shadow: 0 6px 20px rgba(23, 35, 28, .3), 0 0 0 8px rgba(218, 85, 74, .16); }
+.station-cluster.marker-gray { background: #7e8b82; box-shadow: 0 6px 20px rgba(23, 35, 28, .3), 0 0 0 8px rgba(126, 139, 130, .14); }
+
 .station-cluster:hover { transform: scale(1.08); }
 .dark .leaflet-tile-pane { filter: brightness(.72) saturate(.78) hue-rotate(8deg); }
 .dark .leaflet-control-zoom a { border-color: rgba(255,255,255,.08) !important; background: #19241e !important; color: white !important; }

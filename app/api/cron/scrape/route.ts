@@ -26,6 +26,10 @@ type Stats = {
   reportRequestCount: number;
   reportsSkipped: number;
   reportsErrors: string[];
+  stationStatusAvailable: number;
+  stationStatusPartial: number;
+  stationStatusUnavailable: number;
+  stationStatusUnknown: number;
 };
 
 function authorized(request: Request) {
@@ -48,6 +52,19 @@ function errorMessage(error: unknown) {
 function numberInRange(value: string | undefined, fallback: number, min: number, max: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+
+function countStationStatuses(stations: Awaited<ReturnType<typeof fetchBenzinStations>>["stations"]) {
+  return stations.reduce(
+    (counts, station) => {
+      if (station.stationStatus === "available") counts.available += 1;
+      else if (station.stationStatus === "partial") counts.partial += 1;
+      else if (station.stationStatus === "unavailable") counts.unavailable += 1;
+      else counts.unknown += 1;
+      return counts;
+    },
+    { available: 0, partial: 0, unavailable: 0, unknown: 0 },
+  );
 }
 
 export async function GET(request: Request) {
@@ -89,6 +106,7 @@ export async function GET(request: Request) {
     duplicates: 0, skipped: 0, requestCount: 0, fetchDurationMs: 0, importDurationMs: 0,
     reportsFound: 0, reportsCreated: 0, reportsUnchanged: 0, reportRequestCount: 0,
     reportsSkipped: 0, reportsErrors: [],
+    stationStatusAvailable: 0, stationStatusPartial: 0, stationStatusUnavailable: 0, stationStatusUnknown: 0,
   };
   let phase = "logging";
   try {
@@ -134,6 +152,11 @@ export async function GET(request: Request) {
     stats.reportsErrors = result.reportErrors;
     errors.push(...result.reportErrors.map((message) => `Report: ${message}`));
     stats.duplicates = result.duplicatesDiscarded;
+    const statusCounts = countStationStatuses(result.stations);
+    stats.stationStatusAvailable = statusCounts.available;
+    stats.stationStatusPartial = statusCounts.partial;
+    stats.stationStatusUnavailable = statusCounts.unavailable;
+    stats.stationStatusUnknown = statusCounts.unknown;
 
     phase = "import";
     const importStartedAt = Date.now();
@@ -173,6 +196,10 @@ export async function GET(request: Request) {
       reports_found_count: stats.reportsFound, reports_created_count: stats.reportsCreated,
       reports_unchanged_count: stats.reportsUnchanged, report_request_count: stats.reportRequestCount,
       reports_skipped_count: stats.reportsSkipped, reports_error_count: stats.reportsErrors.length,
+      station_status_available_count: stats.stationStatusAvailable,
+      station_status_partial_count: stats.stationStatusPartial,
+      station_status_unavailable_count: stats.stationStatusUnavailable,
+      station_status_unknown_count: stats.stationStatusUnknown,
       reports_errors: stats.reportsErrors.length ? stats.reportsErrors.slice(0, 100) : null,
       error_message: errors.length ? errors.join("; ").slice(0, 2_000) : null,
       error_details: errors.length ? { errors, recordedAt: new Date().toISOString() } : null,
@@ -192,6 +219,10 @@ export async function GET(request: Request) {
         reports_found_count: stats.reportsFound, reports_created_count: stats.reportsCreated,
         reports_unchanged_count: stats.reportsUnchanged, report_request_count: stats.reportRequestCount,
         reports_skipped_count: stats.reportsSkipped, reports_error_count: stats.reportsErrors.length,
+        station_status_available_count: stats.stationStatusAvailable,
+        station_status_partial_count: stats.stationStatusPartial,
+        station_status_unavailable_count: stats.stationStatusUnavailable,
+        station_status_unknown_count: stats.stationStatusUnknown,
         reports_errors: stats.reportsErrors.length ? stats.reportsErrors.slice(0, 100) : null,
         error_message: errors.join("; ").slice(0, 2_000),
         error_details: { errors, recordedAt: new Date().toISOString() },
