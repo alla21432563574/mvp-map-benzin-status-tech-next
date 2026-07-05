@@ -39,7 +39,7 @@ export async function GET(request: Request) {
 
   let stationQuery = supabase
     .from("stations")
-    .select("id,name,address,city,latitude,longitude,brand,ai92,ai95,diesel,gas,updated_at,update_source")
+    .select("id,name,address,city,latitude,longitude,brand,ai92,ai95,diesel,gas,has_queue,updated_at,update_source")
     .limit(Math.min(MAX_LIMIT * 3, Math.max(limit * 3, 20)));
 
   if (near > 0 && latitude !== null && longitude !== null) {

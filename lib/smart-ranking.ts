@@ -35,6 +35,7 @@ const WEIGHTS = {
   confirmations: 5,
   knownBrand: 2,
   affinity: 2,
+  queue: 4,
 } as const;
 
 function freshness(value: string, now: number) {
@@ -86,6 +87,7 @@ export function rankStations(items: Array<{ station: Station; distance: number }
     const knownBrand = brandOptions.some((brand) => brand.id === brandId) ? 1 : 0;
     const affinity = Math.min(1, (context.brandAffinity[brandId] || 0) / 8);
     const confirmationCount = signal?.confirmationCount ?? 1;
+    const queueScore = typeof station.queue_count === "number" ? 1 / (1 + station.queue_count / 3) : station.has_queue === false ? 1 : station.has_queue === true ? 0.2 : 0.55;
     const score =
       (1 / (1 + distance / 4)) * WEIGHTS.distance +
       statusScore * WEIGHTS.overallStatus +
@@ -94,7 +96,8 @@ export function rankStations(items: Array<{ station: Station; distance: number }
       freshness(lastConfirmationAt, context.now) * WEIGHTS.freshness +
       Math.min(1, Math.log2(confirmationCount + 1) / Math.log2(16)) * WEIGHTS.confirmations +
       knownBrand * WEIGHTS.knownBrand +
-      affinity * WEIGHTS.affinity;
+      affinity * WEIGHTS.affinity +
+      queueScore * WEIGHTS.queue;
     return {
       station,
       distance,

@@ -21,7 +21,7 @@ const dotClasses: Record<StationStatusKind, string> = {
 
 type Props = {
   items: RankedStation[];
-  bestOption: RankedStation | null;
+  bestOptions: RankedStation[];
   loading: boolean;
   selectedId: string | null;
   selectedFuels: ReadonlySet<FilterFuelKey>;
@@ -29,18 +29,28 @@ type Props = {
   onSelect: (station: Station) => void;
 };
 
-export default function StationList({ items, bestOption, loading, selectedId, selectedFuels, now, onSelect }: Props) {
+function queueLabel(station: Station) {
+  if (typeof station.queue_count === "number") return `очередь: ${station.queue_count} машин`;
+  if (station.has_queue === false) return "без очереди";
+  if (station.has_queue === true) return "есть очередь";
+  return null;
+}
+
+export default function StationList({ items, bestOptions, loading, selectedId, selectedFuels, now, onSelect }: Props) {
   if (loading && !items.length) return <div className="space-y-2 p-3">{[1, 2, 3, 4].map((item) => <div key={item} className="h-28 animate-pulse rounded-2xl bg-ink/5 dark:bg-white/5" />)}</div>;
   if (!items.length) return <div className="px-7 py-12 text-center"><MapPin className="mx-auto text-forest/35 dark:text-lime/35" size={30} /><p className="mt-3 font-bold">АЗС не найдены</p><p className="mt-1 text-sm text-ink/45 dark:text-white/45">Измените фильтры или область карты.</p></div>;
 
-  const regularItems = bestOption ? items.filter((item) => item.station.id !== bestOption.station.id) : items;
+  const bestIds = new Set(bestOptions.map((item) => item.station.id));
+  const regularItems = items.filter((item) => !bestIds.has(item.station.id));
   return (
     <div className="space-y-2 p-3">
-      {bestOption && <article onClick={() => onSelect(bestOption.station)} className="mb-3 cursor-pointer rounded-[22px] border border-lime/60 bg-gradient-to-br from-forest to-[#174d35] p-4 text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl">
-        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.14em] text-lime"><Star size={14} fill="currentColor" />Лучший вариант рядом</div>
-        <div className="mt-3 flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/10 text-[10px] font-black text-lime">{brandInitials(bestOption.station.brand)}</span><div className="min-w-0 flex-1"><b className="block truncate text-base">{bestOption.station.brand || bestOption.station.name}</b><p className="mt-1 text-xs text-white/65">{stationDisplayStatus(bestOption.station, selectedFuels).label}</p><div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-white/70"><span>Уверенность {bestOption.confidence}%</span><span>{relativeTime(bestOption.lastConfirmationAt, now)}</span><span>{formatDistance(bestOption.distance)}</span></div></div></div>
-        <a onClick={(event) => event.stopPropagation()} href={`https://yandex.ru/maps/?rtext=~${bestOption.station.latitude},${bestOption.station.longitude}&rtt=auto`} target="_blank" rel="noreferrer" className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-lime px-4 py-2.5 text-xs font-black text-ink transition hover:bg-white"><Navigation size={14} />Построить маршрут</a>
-      </article>}
+      {bestOptions.length > 0 && <section className="mb-3 overflow-hidden rounded-[22px] border border-lime/60 bg-gradient-to-br from-forest to-[#174d35] text-white shadow-lg">
+        <div className="flex items-center gap-2 px-4 pb-2 pt-4 text-[11px] font-black uppercase tracking-[.12em] text-lime"><Star size={14} fill="currentColor" />Лучшие варианты рядом</div>
+        <div className="divide-y divide-white/10">{bestOptions.map((item) => {
+          const queue = queueLabel(item.station);
+          return <div key={item.station.id} onClick={() => onSelect(item.station)} className="flex cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-white/[.07]"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10 text-[9px] font-black text-lime">{brandInitials(item.station.brand)}</span><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><b className="truncate text-sm">{item.station.brand || item.station.name}</b><span className="shrink-0 text-[10px] font-bold text-lime">{formatDistance(item.distance)}</span></div><p className="mt-0.5 truncate text-[10px] text-white/65">{stationDisplayStatus(item.station, selectedFuels).label} · уверенность {item.confidence}%</p><p className="mt-0.5 truncate text-[10px] text-white/50">{relativeTime(item.lastConfirmationAt, now)}{queue ? ` · ${queue}` : ""}</p></div><a onClick={(event) => event.stopPropagation()} href={`https://yandex.ru/maps/?rtext=~${item.station.latitude},${item.station.longitude}&rtt=auto`} target="_blank" rel="noreferrer" className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-lime text-ink transition hover:bg-white" aria-label={`Маршрут до ${item.station.brand || item.station.name}`}><Navigation size={14} /></a></div>;
+        })}</div>
+      </section>}
       {regularItems.slice(0, 150).map(({ station, distance, confidence, lastConfirmationAt, reason }) => {
         const status = stationDisplayStatus(station, selectedFuels);
         return <button key={station.id} onClick={() => onSelect(station)} className={`group w-full rounded-2xl border p-3 text-left transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${selectedId === station.id ? "border-forest/40 bg-forest/[.06] dark:border-lime/40 dark:bg-lime/[.06]" : "border-ink/[.07] bg-white dark:border-white/[.07] dark:bg-[#19241e]"}`}>

@@ -41,6 +41,8 @@ export type Station = {
   ai100?: boolean | null;
   diesel: boolean | null;
   gas: boolean | null;
+  has_queue?: boolean | null;
+  queue_count?: number | null;
   updated_at: string;
   update_source: string;
 };
