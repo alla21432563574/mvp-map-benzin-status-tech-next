@@ -82,6 +82,7 @@ type Tile = { south: number; west: number; north: number; east: number; depth: n
 
 export type BenzinScrapeOptions = {
   mode?: "city" | "russia";
+  reportsMode?: "incremental" | "backfill";
   bounds: string;
   maxStations: number;
   latitude: number;
@@ -212,6 +213,7 @@ function normalizeFuelTypes(value: unknown) {
 export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise<BenzinScrapeResult> {
   const startedAt = Date.now();
   const mode = options.mode || "city";
+  const reportsMode = options.reportsMode || "incremental";
   const gridStep = Math.max(0.5, Math.min(10, options.gridStepDegrees || 4));
   const requestDelayMs = Math.max(100, Math.min(5_000, options.requestDelayMs ?? 250));
   const maxStations = Math.max(100, Math.min(5_000, options.maxStations));
@@ -298,9 +300,12 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
         importedAt, rawText: JSON.stringify(raw),
       });
       const reportCursor = options.reportCursors?.get(String(raw.id));
-      if (raw.lastReportAt != null && (reportCursor == null
-        ? raw.lastReportAt >= (options.reportSinceMs ?? Date.now() - 2 * 60 * 60 * 1_000)
-        : raw.lastReportAt > reportCursor)) {
+      const fallbackReportSinceMs = options.reportSinceMs ?? Date.now() - 2 * 60 * 60 * 1_000;
+      if (raw.lastReportAt == null) continue;
+      const shouldFetchReports = reportCursor == null
+        ? reportsMode === "backfill" || raw.lastReportAt >= fallbackReportSinceMs
+        : raw.lastReportAt > reportCursor;
+      if (shouldFetchReports) {
         reportCandidates.set(raw.id, raw.lastReportAt);
       }
     }
@@ -342,7 +347,7 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
     for (const rawReport of detail.reports as PublicApiReport[]) {
       if (!Number.isFinite(rawReport.id) || !Number.isFinite(rawReport.createdAt)) continue;
       const stationCursor = options.reportCursors?.get(String(stationId));
-      const stationCutoff = stationCursor ?? options.reportSinceMs ?? Date.now() - 2 * 60 * 60 * 1_000;
+      const stationCutoff = stationCursor ?? (reportsMode === "backfill" ? 0 : options.reportSinceMs ?? Date.now() - 2 * 60 * 60 * 1_000);
       if (stationCursor == null ? rawReport.createdAt < stationCutoff : rawReport.createdAt <= stationCutoff) continue;
       const fuelTypes = normalizeFuelTypes(rawReport.fuelTypes);
       reports.push({

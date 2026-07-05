@@ -98,6 +98,7 @@ export async function GET(request: Request) {
     logId = log.id as string;
 
     const scraperMode = process.env.SCRAPER_MODE === "russia" ? "russia" as const : "city" as const;
+    const reportsMode = process.env.SCRAPER_REPORTS_MODE === "backfill" ? "backfill" as const : "incremental" as const;
     const reportLookbackHours = numberInRange(process.env.SCRAPER_REPORT_LOOKBACK_HOURS, 2, 1, 168);
     let reportSinceMs = Date.now() - reportLookbackHours * 60 * 60 * 1_000;
     let previousRunQuery = supabase.from("scrape_logs")
@@ -118,6 +119,7 @@ export async function GET(request: Request) {
       city: process.env.SCRAPER_CITY || "Москва",
       gridStepDegrees: numberInRange(process.env.SCRAPER_GRID_STEP_DEGREES, 4, 0.5, 10),
       requestDelayMs: numberInRange(process.env.SCRAPER_REQUEST_DELAY_MS, 250, 100, 5_000),
+      reportsMode,
       reportSinceMs,
       maxReportStationRequests: numberInRange(process.env.SCRAPER_MAX_REPORT_STATIONS, 2_000, 1, 10_000),
       reportCursors,

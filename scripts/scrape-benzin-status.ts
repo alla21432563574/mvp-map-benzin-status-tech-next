@@ -46,6 +46,7 @@ const config = {
   bounds: process.env.SCRAPER_BOUNDS || "55.40,36.80,56.10,38.40",
   gridStepDegrees: Math.max(0.5, Math.min(10, Number(process.env.SCRAPER_GRID_STEP_DEGREES || 4))),
   requestDelayMs: Math.max(100, Math.min(5_000, Number(process.env.SCRAPER_REQUEST_DELAY_MS || 250))),
+  reportsMode: process.env.SCRAPER_REPORTS_MODE === "backfill" ? "backfill" as const : "incremental" as const,
   reportLookbackHours: Math.max(1, Math.min(168, Number(process.env.SCRAPER_REPORT_LOOKBACK_HOURS || 2))),
   maxReportStationRequests: Math.max(1, Math.min(10_000, Number(process.env.SCRAPER_MAX_REPORT_STATIONS || 2_000))),
   lockSeconds: Math.max(600, Math.min(3_600, Number(process.env.SCRAPER_LOCK_SECONDS || 3_600))),
@@ -141,6 +142,7 @@ async function fetchStations(reportSinceMs: number, reportCursors: ReadonlyMap<s
     city: config.city,
     gridStepDegrees: config.gridStepDegrees,
     requestDelayMs: config.requestDelayMs,
+    reportsMode: config.reportsMode,
     reportSinceMs,
     maxReportStationRequests: config.maxReportStationRequests,
     reportCursors,
@@ -286,7 +288,7 @@ async function runOnce() {
       (total, station) => total + [station.ai92, station.ai95, station.diesel, station.gas].filter((value) => value !== null).length,
       0,
     );
-    console.log(`Метрики: режим ${config.mode}; HTTP ${result.httpStatus}; запросов станций ${result.requestCount}; запросов истории ${result.reportRequestCount}; отложено карточек истории ${result.reportCandidatesSkipped}; ошибок истории ${result.reportErrors.length}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; отметок найдено ${result.reports.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
+    console.log(`Метрики: режим ${config.mode}; режим отметок ${config.reportsMode}; HTTP ${result.httpStatus}; запросов станций ${result.requestCount}; запросов истории ${result.reportRequestCount}; отложено карточек истории ${result.reportCandidatesSkipped}; ошибок истории ${result.reportErrors.length}; тайлов ${result.tilesProcessed}; АЗС найдено ${result.stations.length}; отметок найдено ${result.reports.length}; дублей отброшено ${result.duplicatesDiscarded}; вне России отброшено ${result.outsideRussiaDiscarded}; обрезанных тайлов ${result.truncatedTiles}; статусов топлива ${fuelStatuses}; время ${result.durationMs} мс.`);
     if (result.reportErrors.length) console.warn(`Ошибки истории:\n${result.reportErrors.slice(0, 20).join("\n")}`);
     phase = "logging";
     if (supabase && logId) await finishLog(supabase, logId, "success", stats);
