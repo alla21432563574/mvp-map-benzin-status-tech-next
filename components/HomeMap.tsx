@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Activity, Building2, ChevronDown, Clock3, Fuel, LocateFixed, Loader2, Map as MapIcon, MapPinned, Moon, ShieldCheck, Sparkles, Star, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { distanceKm, relativeTime, stationBrandId, stationHasFuel, type MapPoint } from "@/lib/map-utils";
+import { selectSmartPick } from "@/lib/smart-pick";
 import { rankStations, type RankingSignal } from "@/lib/smart-ranking";
 import type { FilterFuelKey, MapBounds, Station, StationDetails } from "@/lib/types";
 import CitySearch, { type GeocodePlace } from "./CitySearch";
@@ -73,6 +74,7 @@ export default function HomeMap() {
   const [stationDetails, setStationDetails] = useState<StationDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [rankingSignals, setRankingSignals] = useState<Map<string, RankingSignal>>(new Map());
+  const [rankingLoading, setRankingLoading] = useState(false);
   const [brandAffinity, setBrandAffinity] = useState<Record<string, number>>(initialBrandAffinity);
   const rankingCache = useRef(new Map<string, { signal: RankingSignal; updatedAt: string; expiresAt: number }>());
   const initialLocationCheck = useRef(false);
@@ -80,6 +82,7 @@ export default function HomeMap() {
   const [locationHelpOpen, setLocationHelpOpen] = useState(false);
   const [searchFocusToken, setSearchFocusToken] = useState(0);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const [smartPickScrollToken, setSmartPickScrollToken] = useState(0);
   const selectedStationId = selected?.id;
 
   useEffect(() => {
@@ -178,7 +181,7 @@ export default function HomeMap() {
   const rankingCandidateKey = rankingCandidates.map(({ station }) => `${station.id}:${station.updated_at}`).join("|");
 
   useEffect(() => {
-    if (!rankingCandidates.length) { setRankingSignals(new Map()); return; }
+    if (!rankingCandidates.length) { setRankingSignals(new Map()); setRankingLoading(false); return; }
     const cachedSignals = new Map<string, RankingSignal>();
     const missing = rankingCandidates.filter(({ station }) => {
       const cached = rankingCache.current.get(station.id);
@@ -189,7 +192,8 @@ export default function HomeMap() {
       return true;
     });
     setRankingSignals(cachedSignals);
-    if (!missing.length) return;
+    if (!missing.length) { setRankingLoading(false); return; }
+    setRankingLoading(true);
     const controller = new AbortController();
     fetch("/api/stations/ranking-signals", {
       method: "POST",
@@ -204,12 +208,13 @@ export default function HomeMap() {
         next.set(station.id, signal);
       }
       setRankingSignals(next);
-    }).catch((error) => { if (error instanceof Error && error.name !== "AbortError") setRankingSignals(cachedSignals); });
+    }).catch((error) => { if (error instanceof Error && error.name !== "AbortError") setRankingSignals(cachedSignals); })
+      .finally(() => { if (!controller.signal.aborted) setRankingLoading(false); });
     return () => controller.abort();
   }, [rankingCandidateKey, rankingCandidates]);
 
   const listItems = useMemo(() => rankStations(rankingCandidates, { selectedFuels: fuels, brandAffinity, signals: rankingSignals, now }), [brandAffinity, fuels, now, rankingCandidates, rankingSignals]);
-  const bestOptions = listItems.slice(0, Math.min(4, listItems.length));
+  const smartPick = useMemo(() => selectSmartPick(listItems, { selectedFuels: fuels, now }), [fuels, listItems, now]);
 
   const latestUpdate = useMemo(() => stations.reduce<string | null>((latest, station) => !latest || new Date(station.updated_at) > new Date(latest) ? station.updated_at : latest, null), [stations]);
   const currentAreaCount = fuels.size || brands.size ? visible.length : totalStations;
@@ -232,6 +237,17 @@ export default function HomeMap() {
   }, []);
 
   const moveToStation = (station: Station) => {
+    selectStation(station);
+    setTarget({ latitude: station.latitude, longitude: station.longitude, zoom: 15, token: Date.now() });
+  };
+
+  const openSmartPick = () => {
+    setSelected(null);
+    setMobileSheetOpen(true);
+    setSmartPickScrollToken((current) => current + 1);
+  };
+
+  const focusSmartPick = (station: Station) => {
     selectStation(station);
     setTarget({ latitude: station.latitude, longitude: station.longitude, zoom: 15, token: Date.now() });
   };
@@ -353,7 +369,7 @@ export default function HomeMap() {
     <div className={`absolute inset-0 flex flex-col transition-all duration-300 ease-out ${selected ? "pointer-events-none -translate-x-8 opacity-0" : "translate-x-0 opacity-100"}`} aria-hidden={Boolean(selected)}>
       <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
       <div className="flex items-center justify-between border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{brandFiltered.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="text-ink/40 dark:text-white/40">Smart Ranking</span></div>
-      <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} bestOptions={bestOptions} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={selectStation} /></div>
+      <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} smartPick={smartPick} smartPickLoading={rankingLoading} scrollToken={smartPickScrollToken} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={selectStation} onFocusStation={focusSmartPick} /></div>
     </div>
     <div className={`absolute inset-0 transition-all duration-300 ease-out ${selected ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"}`} aria-hidden={!selected}>
       {selected && <StationCard station={selected} details={stationDetails} detailsLoading={detailsLoading} distance={selectedDistance} favorite={favorites.has(selected.id)} now={now} onBack={() => { setSelected(null); setReporting(false); }} onReport={() => setReporting(true)} onFavorite={toggleFavorite} onShare={shareStation} />}
@@ -369,7 +385,7 @@ export default function HomeMap() {
         </aside>
 
         <section className={`relative min-w-0 flex-1 ${mobileSheetOpen || selected ? "mobile-sheet-open" : ""}`}>
-          <MapView stations={visible} selectedId={selected?.id ?? null} onSelect={selectStation} onBoundsChange={handleBoundsChange} onViewChange={handleViewChange} initialCenter={start.center} initialZoom={start.zoom} target={target} userLocation={userLocation} />
+          <MapView stations={visible} selectedId={selected?.id ?? null} recommendedId={smartPick.state === "ready" ? smartPick.item.station.id : null} onSelect={selectStation} onBoundsChange={handleBoundsChange} onViewChange={handleViewChange} initialCenter={start.center} initialZoom={start.zoom} target={target} userLocation={userLocation} />
 
           <div className="pointer-events-none absolute left-3 right-3 top-3 z-[600] sm:left-5 sm:right-5 sm:top-5">
             <div className="pointer-events-auto mx-auto flex max-w-4xl gap-2"><CitySearch center={center} focusToken={searchFocusToken} onPlaceSelect={moveTo} onStationSelect={moveToStation} /><button onClick={requestLocation} disabled={locating} className="flex h-14 shrink-0 items-center gap-2 rounded-2xl bg-forest px-4 font-bold text-white shadow-soft transition hover:bg-ink disabled:opacity-60 dark:bg-lime dark:text-ink dark:hover:bg-white sm:h-16 sm:rounded-[22px] sm:px-5" aria-label="Моё местоположение">{locating ? <Loader2 className="animate-spin" size={20} /> : <LocateFixed size={20} />}<span className="hidden md:inline">Моё местоположение</span></button><button onClick={toggleTheme} className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white text-ink shadow-soft transition hover:bg-cream dark:bg-[#19241e] dark:text-lime dark:hover:bg-white/10 sm:hidden" aria-label={dark ? "Включить светлую тему" : "Включить тёмную тему"}>{dark ? <Sun size={19} /> : <Moon size={19} />}</button></div>
@@ -384,7 +400,7 @@ export default function HomeMap() {
 
           {loading && <div className="pointer-events-none absolute inset-x-0 top-0 z-[550] h-1 overflow-hidden bg-forest/10"><i className="block h-full w-1/3 animate-loading-bar bg-lime" /></div>}
 
-          {!mobileSheetOpen && !selected && <button onClick={() => setMobileSheetOpen(true)} className="absolute bottom-20 left-1/2 z-[560] flex -translate-x-1/2 items-center gap-2 rounded-full border border-ink/10 bg-white/95 px-5 py-3 text-sm font-black text-ink shadow-soft backdrop-blur transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-[#19241e]/95 dark:text-white lg:hidden"><Sparkles size={17} className="text-forest dark:text-lime" />Умный подбор</button>}
+          {!mobileSheetOpen && !selected && <button onClick={openSmartPick} className="absolute bottom-20 left-1/2 z-[560] flex -translate-x-1/2 items-center gap-2 rounded-full border border-ink/10 bg-white/95 px-5 py-3 text-sm font-black text-ink shadow-soft backdrop-blur transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-[#19241e]/95 dark:text-white lg:hidden"><Sparkles size={17} className="text-forest dark:text-lime" />Умный подбор</button>}
 
           <aside className={`absolute bottom-16 left-0 right-0 z-[500] flex flex-col overflow-hidden rounded-t-[28px] bg-[#fbfcf9] shadow-[0_-12px_40px_rgba(23,35,28,.16)] transition-[height,opacity] duration-300 dark:bg-[#121b16] lg:hidden ${selected ? "h-[78dvh] opacity-100" : mobileSheetOpen ? "h-[70dvh] opacity-100" : "pointer-events-none h-0 opacity-0"}`} aria-hidden={!mobileSheetOpen && !selected}>
             {!selected && <div className="flex h-14 shrink-0 items-center justify-between border-b border-ink/[.07] bg-white px-4 py-2.5 dark:border-white/[.07] dark:bg-[#19241e]"><span className="flex items-center gap-2 text-sm font-black"><Sparkles size={17} className="text-forest dark:text-lime" />Умный подбор</span><button onClick={() => setMobileSheetOpen(false)} className="grid h-9 w-9 place-items-center rounded-full bg-cream text-ink/50 dark:bg-white/5 dark:text-white/50" aria-label="Свернуть список АЗС"><ChevronDown size={18} /></button></div>}

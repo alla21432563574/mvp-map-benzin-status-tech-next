@@ -11,6 +11,7 @@ export type MapTarget = { latitude: number; longitude: number; zoom: number; tok
 type Props = {
   stations: Station[];
   selectedId: string | null;
+  recommendedId: string | null;
   onSelect: (station: Station) => void;
   onBoundsChange: (bounds: MapBounds) => void;
   onViewChange: (center: { latitude: number; longitude: number }, zoom: number) => void;
@@ -28,12 +29,12 @@ function markerClass(station: Station) {
   return "marker-gray";
 }
 
-function iconFor(station: Station, active: boolean) {
+function iconFor(station: Station, active: boolean, recommended: boolean) {
   return L.divIcon({
     className: "",
-    html: `<div class="station-marker ${markerClass(station)}" style="${active ? "transform:rotate(-45deg) scale(1.18);" : ""}"></div>`,
-    iconSize: [34, 34],
-    iconAnchor: [17, 34],
+    html: `<div class="station-marker ${markerClass(station)}${recommended ? " marker-recommended" : ""}" style="${active && !recommended ? "transform:rotate(-45deg) scale(1.18);" : ""}"></div>`,
+    iconSize: recommended ? [42, 42] : [34, 34],
+    iconAnchor: recommended ? [21, 42] : [17, 34],
   });
 }
 
@@ -47,7 +48,7 @@ function clusterIcon(count: number) {
   });
 }
 
-function StationMarkers({ stations, selectedId, onSelect }: Pick<Props, "stations" | "selectedId" | "onSelect">) {
+function StationMarkers({ stations, selectedId, recommendedId, onSelect }: Pick<Props, "stations" | "selectedId" | "recommendedId" | "onSelect">) {
   const map = useMap();
   const [zoom, setZoom] = useState(map.getZoom());
   useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
@@ -56,6 +57,7 @@ function StationMarkers({ stations, selectedId, onSelect }: Pick<Props, "station
     if (zoom >= 12) return stations.map((station) => ({ latitude: station.latitude, longitude: station.longitude, stations: [station] }));
     const cells = new Map<string, { latitude: number; longitude: number; stations: Station[] }>();
     for (const station of stations) {
+      if (station.id === recommendedId) continue;
       const point = map.project([station.latitude, station.longitude], zoom);
       const key = `${Math.floor(point.x / 58)}:${Math.floor(point.y / 58)}`;
       const group = cells.get(key);
@@ -68,13 +70,15 @@ function StationMarkers({ stations, selectedId, onSelect }: Pick<Props, "station
         cells.set(key, { latitude: station.latitude, longitude: station.longitude, stations: [station] });
       }
     }
-    return [...cells.values()];
-  }, [map, stations, zoom]);
+    const recommended = stations.find((station) => station.id === recommendedId);
+    return recommended ? [{ latitude: recommended.latitude, longitude: recommended.longitude, stations: [recommended] }, ...cells.values()] : [...cells.values()];
+  }, [map, recommendedId, stations, zoom]);
 
   return <>{groups.map((group) => {
     if (group.stations.length === 1) {
       const station = group.stations[0];
-      return <Marker key={station.id} position={[station.latitude, station.longitude]} icon={iconFor(station, selectedId === station.id)} zIndexOffset={selectedId === station.id ? 1000 : 0} eventHandlers={{ click: () => onSelect(station) }} />;
+      const recommended = recommendedId === station.id;
+      return <Marker key={station.id} position={[station.latitude, station.longitude]} icon={iconFor(station, selectedId === station.id, recommended)} zIndexOffset={selectedId === station.id ? 1000 : recommended ? 900 : 0} eventHandlers={{ click: () => onSelect(station) }} />;
     }
     const key = `cluster-${zoom}-${group.latitude.toFixed(4)}-${group.longitude.toFixed(4)}`;
     return <Marker key={key} position={[group.latitude, group.longitude]} icon={clusterIcon(group.stations.length)} eventHandlers={{ click: () => map.flyTo([group.latitude, group.longitude], Math.min(zoom + 2, 15), { duration: 0.55 }) }} />;
@@ -110,7 +114,7 @@ function BoundsWatcher({ onChange, onViewChange }: { onChange: (bounds: MapBound
   return null;
 }
 
-export default function MapView({ stations, selectedId, onSelect, onBoundsChange, onViewChange, initialCenter, initialZoom, target, userLocation }: Props) {
+export default function MapView({ stations, selectedId, recommendedId, onSelect, onBoundsChange, onViewChange, initialCenter, initialZoom, target, userLocation }: Props) {
   return (
     <MapContainer center={[initialCenter.latitude, initialCenter.longitude]} zoom={initialZoom} zoomControl={true} className="h-full w-full" minZoom={2}>
       <TileLayer
@@ -118,7 +122,7 @@ export default function MapView({ stations, selectedId, onSelect, onBoundsChange
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <BoundsWatcher onChange={onBoundsChange} onViewChange={onViewChange} />
-      <StationMarkers stations={stations} selectedId={selectedId} onSelect={onSelect} />
+      <StationMarkers stations={stations} selectedId={selectedId} recommendedId={recommendedId} onSelect={onSelect} />
       <FlyToTarget target={target} />
       {userLocation && <><Circle center={[userLocation.latitude, userLocation.longitude]} radius={90} pathOptions={{ color: "#1f6b45", fillColor: "#1f6b45", fillOpacity: 0.12, weight: 1 }} /><Marker position={[userLocation.latitude, userLocation.longitude]} icon={L.divIcon({ className: "", html: '<div class="user-location-marker"><i></i></div>', iconSize: [24, 24], iconAnchor: [12, 12] })} interactive={false} /></>}
     </MapContainer>

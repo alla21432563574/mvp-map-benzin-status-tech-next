@@ -57,6 +57,19 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .marker-red { background: #da554a; }
 .marker-gray { background: #7e8b82; }
 
+.station-marker.marker-recommended {
+  width: 42px;
+  height: 42px;
+  border-color: #dff05a;
+  box-shadow: 0 8px 26px rgba(31, 107, 69, .38), 0 0 0 0 rgba(223, 240, 90, .65);
+  animation: recommended-marker-pulse 2s ease-out infinite;
+}
+
+@keyframes recommended-marker-pulse {
+  0%, 100% { transform: rotate(-45deg) scale(1.08); box-shadow: 0 8px 26px rgba(31, 107, 69, .38), 0 0 0 0 rgba(223, 240, 90, .55); }
+  55% { transform: rotate(-45deg) scale(1.2); box-shadow: 0 10px 32px rgba(31, 107, 69, .42), 0 0 0 13px rgba(223, 240, 90, 0); }
+}
+
 .station-cluster {
   display: grid;
   width: 100%;
