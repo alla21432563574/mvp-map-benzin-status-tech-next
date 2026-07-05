@@ -45,6 +45,30 @@ export type Station = {
   update_source: string;
 };
 
+export type StationHistoryEntry = {
+  id: string;
+  status: "available" | "partial" | "unavailable" | "unknown";
+  label: string;
+  confirmed_at: string;
+  source: string;
+};
+
+export type StationDetails = {
+  confidence: number;
+  confirmation_count: number;
+  unique_confirmers: number;
+  last_confirmation_at: string;
+  source: string;
+  history: StationHistoryEntry[];
+  factors: {
+    freshness: number;
+    confirmations: number;
+    consistency: number;
+    confirmers: number;
+    coverage: number;
+  };
+};
+
 export type PendingReport = {
   id: string;
   station_id: string;

@@ -81,18 +81,6 @@ function StationMarkers({ stations, selectedId, onSelect }: Pick<Props, "station
   })}</>;
 }
 
-function FocusStation({ station }: { station?: Station }) {
-  const map = useMap();
-  useEffect(() => {
-    if (!station) return;
-    const target = L.latLng(station.latitude, station.longitude);
-    if (map.getCenter().distanceTo(target) > 30 || map.getZoom() < 14) {
-      map.flyTo(target, Math.max(map.getZoom(), 14), { duration: 0.6 });
-    }
-  }, [map, station]);
-  return null;
-}
-
 function FlyToTarget({ target }: { target: MapTarget | null }) {
   const map = useMap();
   useEffect(() => {
@@ -123,7 +111,6 @@ function BoundsWatcher({ onChange, onViewChange }: { onChange: (bounds: MapBound
 }
 
 export default function MapView({ stations, selectedId, onSelect, onBoundsChange, onViewChange, initialCenter, initialZoom, target, userLocation }: Props) {
-  const selected = stations.find((station) => station.id === selectedId);
   return (
     <MapContainer center={[initialCenter.latitude, initialCenter.longitude]} zoom={initialZoom} zoomControl={true} className="h-full w-full" minZoom={2}>
       <TileLayer
@@ -132,7 +119,6 @@ export default function MapView({ stations, selectedId, onSelect, onBoundsChange
       />
       <BoundsWatcher onChange={onBoundsChange} onViewChange={onViewChange} />
       <StationMarkers stations={stations} selectedId={selectedId} onSelect={onSelect} />
-      <FocusStation station={selected} />
       <FlyToTarget target={target} />
       {userLocation && <><Circle center={[userLocation.latitude, userLocation.longitude]} radius={90} pathOptions={{ color: "#1f6b45", fillColor: "#1f6b45", fillOpacity: 0.12, weight: 1 }} /><Marker position={[userLocation.latitude, userLocation.longitude]} icon={L.divIcon({ className: "", html: '<div class="user-location-marker"><i></i></div>', iconSize: [24, 24], iconAnchor: [12, 12] })} interactive={false} /></>}
     </MapContainer>

@@ -41,7 +41,7 @@ export default function StationList({ items, loading, selectedId, selectedFuels,
           <div className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-forest text-[10px] font-black tracking-tight text-lime">{brandInitials(station.brand)}</span>
             <span className="min-w-0 flex-1">
-              <span className="flex items-start justify-between gap-2"><span className="min-w-0"><b className="block truncate text-sm leading-tight">{station.name}</b><small className="mt-0.5 block truncate text-[10px] font-bold uppercase tracking-wider text-ink/35 dark:text-white/35">{station.brand || "АЗС"}</small></span><span className="shrink-0 text-xs font-bold text-forest dark:text-lime">{formatDistance(distance)}</span></span>
+              <span className="flex items-start justify-between gap-2"><b className="block min-w-0 truncate text-sm leading-tight">{station.brand || station.name || "АЗС"}</b><span className="shrink-0 text-xs font-bold text-forest dark:text-lime">{formatDistance(distance)}</span></span>
               <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-bold ${statusClasses[status.kind]}`}><i className={`h-1.5 w-1.5 rounded-full ${dotClasses[status.kind]}`} />{status.label}</span>
               <span className="mt-2 block truncate text-xs text-ink/45 dark:text-white/45">{station.address || "Адрес не указан"}</span>
             </span>

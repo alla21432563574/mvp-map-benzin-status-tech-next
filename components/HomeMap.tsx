@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Clock3, Fuel, LocateFixed, Loader2, Moon, ShieldCheck, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { distanceKm, relativeTime, stationBrandId, stationHasFuel, type MapPoint } from "@/lib/map-utils";
-import type { FilterFuelKey, MapBounds, Station } from "@/lib/types";
+import type { FilterFuelKey, MapBounds, Station, StationDetails } from "@/lib/types";
 import CitySearch, { type GeocodePlace } from "./CitySearch";
 import FilterPanel from "./FilterPanel";
 import type { MapTarget } from "./MapView";
@@ -61,6 +61,9 @@ export default function HomeMap() {
   const [now, setNow] = useState(Date.now());
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [dark, setDark] = useState(false);
+  const [stationDetails, setStationDetails] = useState<StationDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const selectedStationId = selected?.id;
 
   useEffect(() => {
     try { setFavorites(new Set(JSON.parse(localStorage.getItem("favorite-stations") || "[]") as string[])); } catch { /* ignore damaged local preference */ }
@@ -114,6 +117,28 @@ export default function HomeMap() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  useEffect(() => {
+    if (!selectedStationId) {
+      setStationDetails(null);
+      setDetailsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setStationDetails(null);
+    setDetailsLoading(true);
+    fetch(`/api/stations/${selectedStationId}/details`, { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Не удалось загрузить детали АЗС");
+        setStationDetails(data.details ?? null);
+      })
+      .catch((error) => {
+        if (error instanceof Error && error.name !== "AbortError") setStationDetails(null);
+      })
+      .finally(() => { if (!controller.signal.aborted) setDetailsLoading(false); });
+    return () => controller.abort();
+  }, [selectedStationId]);
+
   const handleBoundsChange = useCallback((nextBounds: MapBounds) => {
     setBounds((current) => current && current.west === nextBounds.west && current.south === nextBounds.south && current.east === nextBounds.east && current.north === nextBounds.north ? current : nextBounds);
   }, []);
@@ -146,6 +171,7 @@ export default function HomeMap() {
 
   const latestUpdate = useMemo(() => stations.reduce<string | null>((latest, station) => !latest || new Date(station.updated_at) > new Date(latest) ? station.updated_at : latest, null), [stations]);
   const currentAreaCount = fuels.size || brands.size ? visible.length : totalStations;
+  const selectedDistance = selected ? distanceKm(userLocation ?? center, selected) : 0;
 
   const moveTo = (place: GeocodePlace) => {
     setTarget({ latitude: place.latitude, longitude: place.longitude, zoom: 13, token: Date.now() });
@@ -219,11 +245,16 @@ export default function HomeMap() {
     }
   };
 
-  const sidebar = <>
-    <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
-    <div className="flex items-center justify-between border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{visible.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="text-ink/40 dark:text-white/40">умная сортировка</span></div>
-    <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={setSelected} /></div>
-  </>;
+  const sidebar = <div className="relative min-h-0 flex-1 overflow-hidden">
+    <div className={`absolute inset-0 flex flex-col transition-all duration-300 ease-out ${selected ? "pointer-events-none -translate-x-8 opacity-0" : "translate-x-0 opacity-100"}`} aria-hidden={Boolean(selected)}>
+      <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
+      <div className="flex items-center justify-between border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{visible.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="text-ink/40 dark:text-white/40">умная сортировка</span></div>
+      <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={setSelected} /></div>
+    </div>
+    <div className={`absolute inset-0 transition-all duration-300 ease-out ${selected ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"}`} aria-hidden={!selected}>
+      {selected && <StationCard station={selected} details={stationDetails} detailsLoading={detailsLoading} distance={selectedDistance} favorite={favorites.has(selected.id)} now={now} onBack={() => { setSelected(null); setReporting(false); }} onReport={() => setReporting(true)} onFavorite={toggleFavorite} onShare={shareStation} />}
+    </div>
+  </div>;
 
   return (
     <main className="h-[100dvh] overflow-hidden bg-cream text-ink transition-colors dark:bg-[#0e1511] dark:text-white lg:p-3">
@@ -248,9 +279,8 @@ export default function HomeMap() {
           </div>
 
           {loading && <div className="pointer-events-none absolute inset-x-0 top-0 z-[550] h-1 overflow-hidden bg-forest/10"><i className="block h-full w-1/3 animate-loading-bar bg-lime" /></div>}
-          {selected && <StationCard station={selected} favorite={favorites.has(selected.id)} now={now} onClose={() => setSelected(null)} onReport={() => setReporting(true)} onFavorite={toggleFavorite} onShare={shareStation} />}
 
-          <aside className="absolute bottom-0 left-0 right-0 z-[500] flex max-h-[38dvh] min-h-[190px] flex-col rounded-t-[28px] bg-[#fbfcf9] shadow-[0_-12px_40px_rgba(23,35,28,.16)] dark:bg-[#121b16] lg:hidden">
+          <aside className={`absolute bottom-0 left-0 right-0 z-[500] flex min-h-[190px] flex-col rounded-t-[28px] bg-[#fbfcf9] shadow-[0_-12px_40px_rgba(23,35,28,.16)] transition-[height,max-height] duration-300 dark:bg-[#121b16] lg:hidden ${selected ? "h-[82dvh] max-h-[82dvh]" : "h-[38dvh] max-h-[38dvh]"}`}>
             <div className="mx-auto my-2 h-1 w-10 rounded-full bg-ink/15" />
             {sidebar}
           </aside>
