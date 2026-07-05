@@ -11,6 +11,7 @@ create table public.stations (
   latitude double precision not null check (latitude between -90 and 90),
   longitude double precision not null check (longitude between -180 and 180),
   brand text not null,
+  station_status text check (station_status in ('available', 'partial', 'unavailable', 'unknown')),
   ai92 boolean,
   ai95 boolean,
   diesel boolean,

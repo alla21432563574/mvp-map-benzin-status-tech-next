@@ -23,6 +23,7 @@ export type FuelStatus = boolean | null;
 export type ScrapedStation = {
   externalSource: typeof BENZIN_SOURCE;
   externalKey: string;
+  stationStatus: "available" | "partial" | "unavailable" | "unknown";
   city: string;
   name: string;
   address: string;
@@ -204,6 +205,10 @@ function reportStatus(status: string): ScrapedReport["status"] {
   return "unknown";
 }
 
+function stationStatus(status: string): ScrapedStation["stationStatus"] {
+  return reportStatus(status);
+}
+
 function normalizeFuelTypes(value: unknown) {
   if (!Array.isArray(value)) return [];
   const allowed = new Set(["ai92", "ai95", "ai98", "ai100", "dt", "gas"]);
@@ -293,6 +298,7 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
       nameAddresses.add(nameAddressKey);
       stations.push({
         externalSource: BENZIN_SOURCE, externalKey: String(raw.id), city: mode === "russia" ? "Россия" : options.city,
+        stationStatus: stationStatus(raw.status),
         name, address, brand: raw.brand || name, latitude: raw.lat, longitude: raw.lng,
         ai92: fuelStatus(raw, "ai92"), ai95: fuelStatus(raw, "ai95"), diesel: fuelStatus(raw, "dt"), gas: fuelStatus(raw, "gas"),
         hasQueue: typeof raw.q === "number" ? raw.q > 0 : null,

@@ -44,6 +44,7 @@ async function stageBatch(supabase: SupabaseClient, runId: string, batch: Scrape
   const payload = batch.map((station) => ({
     external_source: station.externalSource,
     external_key: station.externalKey,
+    station_status: station.stationStatus,
     city: station.city,
     name: station.name,
     address: station.address,
@@ -66,6 +67,23 @@ async function stageBatch(supabase: SupabaseClient, runId: string, batch: Scrape
     if (attempt < 3) await wait(1_000 * 2 ** (attempt - 1));
   }
   throw new Error(`Staging failed: ${errorDescription(lastError)}`);
+}
+
+async function syncStationStatusBatch(supabase: SupabaseClient, source: string, batch: ScrapedStation[]) {
+  const payload = batch.map((station) => ({
+    external_key: station.externalKey,
+    station_status: station.stationStatus,
+    source_updated_at: station.sourceUpdatedAt,
+  }));
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const { error } = await supabase.rpc("update_station_statuses", { p_source: source, p_statuses: payload });
+    if (!error) return;
+    lastError = error;
+    if (attempt < 3) await wait(1_000 * 2 ** (attempt - 1));
+  }
+  throw new Error(`Station status sync failed: ${errorDescription(lastError)}`);
 }
 
 export async function atomicImportStations(
@@ -102,6 +120,10 @@ export async function atomicImportStations(
       if (attempt < 2) await wait(1_500);
     }
     if (lastError) throw new Error(`Finalization failed: ${errorDescription(lastError)}`);
+
+    for (let offset = 0; offset < stations.length; offset += batchSize) {
+      await syncStationStatusBatch(supabase, options.source, stations.slice(offset, offset + batchSize));
+    }
 
     const stats = (result || {}) as Record<string, unknown>;
     return {

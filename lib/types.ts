@@ -35,6 +35,7 @@ export type Station = {
   latitude: number;
   longitude: number;
   brand: string;
+  station_status?: "available" | "partial" | "unavailable" | "unknown" | null;
   ai92: boolean | null;
   ai95: boolean | null;
   ai98?: boolean | null;

@@ -73,6 +73,11 @@ const stationLevelStatusLabels: Record<StationStatusKind, string> = {
 
 export function stationDisplayStatus(station: Station, selectedFuels: ReadonlySet<FilterFuelKey> = new Set()): StationDisplayStatus {
   const selected = [...selectedFuels];
+  const donorStatus = station.station_status;
+  if (!selected.length && donorStatus && donorStatus !== "unknown") {
+    return { kind: donorStatus, label: stationLevelStatusLabels[donorStatus] };
+  }
+
   const latestReportStatus = station.latest_report_status;
   if (!selected.length && latestReportStatus && latestReportStatus !== "unknown") {
     return { kind: latestReportStatus, label: stationLevelStatusLabels[latestReportStatus] };
