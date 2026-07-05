@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Clock3, Fuel, LocateFixed, Loader2, Moon, ShieldCheck, Sun, X } from "lucide-react";
+import { Building2, Clock3, Fuel, LocateFixed, Loader2, MapPinned, Moon, ShieldCheck, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { distanceKm, relativeTime, stationBrandId, stationHasFuel, type MapPoint } from "@/lib/map-utils";
 import { isStrongRecommendation, rankStations, type RankingSignal } from "@/lib/smart-ranking";
@@ -75,6 +75,10 @@ export default function HomeMap() {
   const [rankingSignals, setRankingSignals] = useState<Map<string, RankingSignal>>(new Map());
   const [brandAffinity, setBrandAffinity] = useState<Record<string, number>>(initialBrandAffinity);
   const rankingCache = useRef(new Map<string, { signal: RankingSignal; updatedAt: string; expiresAt: number }>());
+  const initialLocationCheck = useRef(false);
+  const [welcomeState, setWelcomeState] = useState<"checking" | "open" | "closed">("checking");
+  const [locationHelpOpen, setLocationHelpOpen] = useState(false);
+  const [searchFocusToken, setSearchFocusToken] = useState(0);
   const selectedStationId = selected?.id;
 
   useEffect(() => {
@@ -204,7 +208,7 @@ export default function HomeMap() {
   }, [rankingCandidateKey, rankingCandidates]);
 
   const listItems = useMemo(() => rankStations(rankingCandidates, { selectedFuels: fuels, brandAffinity, signals: rankingSignals, now }), [brandAffinity, fuels, now, rankingCandidates, rankingSignals]);
-  const bestOption = isStrongRecommendation(listItems[0], fuels) ? listItems[0] : null;
+  const bestOption = userLocation && listItems[0] ? listItems[0] : isStrongRecommendation(listItems[0], fuels) ? listItems[0] : null;
 
   const latestUpdate = useMemo(() => stations.reduce<string | null>((latest, station) => !latest || new Date(station.updated_at) > new Date(latest) ? station.updated_at : latest, null), [stations]);
   const currentAreaCount = fuels.size || brands.size ? visible.length : totalStations;
@@ -236,8 +240,22 @@ export default function HomeMap() {
     setNotice(`${city.name}: загружаем АЗС`);
   };
 
-  const locate = () => {
-    if (!navigator.geolocation) { setNotice("Ваш браузер не поддерживает определение местоположения."); return; }
+  const requestLocation = useCallback(async () => {
+    if (!navigator.geolocation) {
+      localStorage.setItem("hasSeenLocationDialog", "true");
+      setWelcomeState("closed");
+      setLocationHelpOpen(true);
+      return;
+    }
+    if (navigator.permissions) {
+      const permission = await navigator.permissions.query({ name: "geolocation" }).catch(() => null);
+      if (permission?.state === "denied") {
+        localStorage.setItem("hasSeenLocationDialog", "true");
+        setWelcomeState("closed");
+        setLocationHelpOpen(true);
+        return;
+      }
+    }
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
@@ -245,15 +263,51 @@ export default function HomeMap() {
         setUserLocation(point);
         setTarget({ ...point, zoom: 14, token: Date.now() });
         setLocating(false);
+        setWelcomeState("closed");
+        setLocationHelpOpen(false);
+        localStorage.setItem("hasSeenLocationDialog", "true");
         setNotice("Местоположение найдено. Показываем ближайшие АЗС.");
       },
-      (error) => {
-        const messages: Record<number, string> = { 1: "Доступ к геолокации запрещён. Разрешите его в настройках браузера.", 2: "Не удалось определить местоположение. Попробуйте ещё раз.", 3: "Определение местоположения заняло слишком много времени." };
-        setNotice(messages[error.code] || "Не удалось определить местоположение.");
+      () => {
         setLocating(false);
+        setWelcomeState("closed");
+        setLocationHelpOpen(true);
+        localStorage.setItem("hasSeenLocationDialog", "true");
       },
       { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 },
     );
+  }, []);
+
+  useEffect(() => {
+    if (initialLocationCheck.current) return;
+    initialLocationCheck.current = true;
+    const seen = localStorage.getItem("hasSeenLocationDialog") === "true";
+    if (!navigator.permissions) {
+      setWelcomeState(seen ? "closed" : "open");
+      return;
+    }
+    navigator.permissions.query({ name: "geolocation" }).then((permission) => {
+      if (permission.state === "granted") requestLocation();
+      else if (permission.state === "denied") {
+        setWelcomeState("closed");
+        if (!seen) {
+          localStorage.setItem("hasSeenLocationDialog", "true");
+          setLocationHelpOpen(true);
+        }
+      } else setWelcomeState(seen ? "closed" : "open");
+    }).catch(() => setWelcomeState(seen ? "closed" : "open"));
+  }, [requestLocation]);
+
+  const chooseCityFromWelcome = () => {
+    localStorage.setItem("hasSeenLocationDialog", "true");
+    setWelcomeState("closed");
+    setLocationHelpOpen(false);
+    setSearchFocusToken(Date.now());
+  };
+
+  const continueWithoutLocation = () => {
+    localStorage.setItem("hasSeenLocationDialog", "true");
+    setWelcomeState("closed");
   };
 
   const toggleFavorite = () => {
@@ -315,7 +369,7 @@ export default function HomeMap() {
           <MapView stations={visible} selectedId={selected?.id ?? null} onSelect={selectStation} onBoundsChange={handleBoundsChange} onViewChange={handleViewChange} initialCenter={start.center} initialZoom={start.zoom} target={target} userLocation={userLocation} />
 
           <div className="pointer-events-none absolute left-3 right-3 top-3 z-[600] sm:left-5 sm:right-5 sm:top-5">
-            <div className="pointer-events-auto mx-auto flex max-w-4xl gap-2"><CitySearch center={center} onPlaceSelect={moveTo} onStationSelect={moveToStation} /><button onClick={locate} disabled={locating} className="flex h-14 shrink-0 items-center gap-2 rounded-2xl bg-forest px-4 font-bold text-white shadow-soft transition hover:bg-ink disabled:opacity-60 dark:bg-lime dark:text-ink dark:hover:bg-white sm:h-16 sm:rounded-[22px] sm:px-5" aria-label="Моё местоположение">{locating ? <Loader2 className="animate-spin" size={20} /> : <LocateFixed size={20} />}<span className="hidden md:inline">Моё местоположение</span></button><button onClick={toggleTheme} className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white text-ink shadow-soft transition hover:bg-cream dark:bg-[#19241e] dark:text-lime dark:hover:bg-white/10 sm:hidden" aria-label={dark ? "Включить светлую тему" : "Включить тёмную тему"}>{dark ? <Sun size={19} /> : <Moon size={19} />}</button></div>
+            <div className="pointer-events-auto mx-auto flex max-w-4xl gap-2"><CitySearch center={center} focusToken={searchFocusToken} onPlaceSelect={moveTo} onStationSelect={moveToStation} /><button onClick={requestLocation} disabled={locating} className="flex h-14 shrink-0 items-center gap-2 rounded-2xl bg-forest px-4 font-bold text-white shadow-soft transition hover:bg-ink disabled:opacity-60 dark:bg-lime dark:text-ink dark:hover:bg-white sm:h-16 sm:rounded-[22px] sm:px-5" aria-label="Моё местоположение">{locating ? <Loader2 className="animate-spin" size={20} /> : <LocateFixed size={20} />}<span className="hidden md:inline">Моё местоположение</span></button><button onClick={toggleTheme} className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white text-ink shadow-soft transition hover:bg-cream dark:bg-[#19241e] dark:text-lime dark:hover:bg-white/10 sm:hidden" aria-label={dark ? "Включить светлую тему" : "Включить тёмную тему"}>{dark ? <Sun size={19} /> : <Moon size={19} />}</button></div>
             <div className="pointer-events-auto mx-auto mt-2 flex max-w-4xl gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {QUICK_CITIES.map((city) => <button key={city.name} onClick={() => moveToCity(city)} className="shrink-0 rounded-full border border-ink/5 bg-white/95 px-3 py-1.5 text-[11px] font-bold shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-lime dark:border-white/10 dark:bg-[#19241e]/95 dark:hover:bg-lime dark:hover:text-ink">{city.name}</button>)}
             </div>
@@ -333,6 +387,25 @@ export default function HomeMap() {
           </aside>
         </section>
       </div>
+
+      {welcomeState === "open" && <div className="fixed inset-0 z-[2000] grid place-items-center bg-ink/50 p-4 backdrop-blur-[5px]" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+        <section className="animate-welcome-in w-[min(90vw,500px)] overflow-hidden rounded-[30px] border border-white/40 bg-white p-6 shadow-[0_30px_90px_rgba(0,0,0,.35)] dark:border-white/10 dark:bg-[#19241e] sm:p-8">
+          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-forest text-lime shadow-lg"><MapPinned size={27} /></span>
+          <h2 id="welcome-title" className="mt-5 text-2xl font-black leading-tight sm:text-3xl">Найдём ближайшие АЗС</h2>
+          <p className="mt-3 text-sm leading-relaxed text-ink/60 dark:text-white/60">Разрешите доступ к местоположению, чтобы сразу показать ближайшие заправки, построить маршрут и отображать расстояние до них.</p>
+          <div className="mt-4 rounded-2xl bg-cream p-3 text-xs leading-relaxed text-ink/50 dark:bg-white/5 dark:text-white/50"><b className="block text-ink/75 dark:text-white/75">Ваши координаты остаются приватными</b>Мы не сохраняем их и используем только текущее местоположение устройства.</div>
+          <div className="mt-6 space-y-2.5">
+            <button onClick={requestLocation} disabled={locating} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-forest px-5 py-4 text-sm font-black text-white shadow-lg transition hover:-translate-y-0.5 hover:bg-ink disabled:translate-y-0 disabled:opacity-60 dark:bg-lime dark:text-ink dark:hover:bg-white">{locating ? <Loader2 className="animate-spin" size={19} /> : <LocateFixed size={19} />}Определить автоматически</button>
+            <button onClick={chooseCityFromWelcome} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-ink/10 bg-white px-5 py-3.5 text-sm font-bold transition hover:bg-cream dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"><Building2 size={18} />Выбрать город</button>
+            <button onClick={continueWithoutLocation} className="w-full px-5 py-2.5 text-xs font-bold text-ink/45 transition hover:text-ink dark:text-white/45 dark:hover:text-white">Продолжить без геолокации</button>
+          </div>
+        </section>
+      </div>}
+
+      {locationHelpOpen && welcomeState !== "open" && <div className="fixed bottom-5 left-1/2 z-[1500] w-[min(92vw,460px)] -translate-x-1/2 rounded-2xl border border-ink/10 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-[#19241e]">
+        <div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700"><LocateFixed size={17} /></span><div className="min-w-0 flex-1"><b className="text-sm">Не удалось определить местоположение</b><p className="mt-1 text-xs leading-relaxed text-ink/50 dark:text-white/50">Выберите город вручную или разрешите доступ в настройках браузера.</p></div><button onClick={() => setLocationHelpOpen(false)} className="rounded-full p-1 text-ink/35 hover:bg-cream dark:text-white/35 dark:hover:bg-white/10" aria-label="Закрыть уведомление"><X size={15} /></button></div>
+        <button onClick={chooseCityFromWelcome} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-forest px-4 py-2.5 text-xs font-black text-white dark:bg-lime dark:text-ink"><Building2 size={15} />Выбрать город</button>
+      </div>}
 
       {notice && <div className="fixed bottom-[40dvh] left-1/2 z-[1200] flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-3 rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white shadow-soft lg:bottom-7"><span className="h-2 w-2 shrink-0 rounded-full bg-lime" />{notice}<button onClick={() => setNotice(null)} className="ml-2 opacity-60 hover:opacity-100"><X size={15} /></button></div>}
       {reporting && selected && <ReportModal station={selected} onClose={() => setReporting(false)} />}

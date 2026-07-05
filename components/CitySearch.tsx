@@ -20,19 +20,27 @@ type SearchResult =
 
 type Props = {
   center: MapPoint;
+  focusToken?: number;
   onPlaceSelect: (place: GeocodePlace) => void;
   onStationSelect: (station: Station) => void;
 };
 
-export default function CitySearch({ center, onPlaceSelect, onStationSelect }: Props) {
+export default function CitySearch({ center, focusToken = 0, onPlaceSelect, onStationSelect }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const request = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const centerRef = useRef(center);
   centerRef.current = center;
+
+  useEffect(() => {
+    if (!focusToken) return;
+    inputRef.current?.focus();
+    setOpen(results.length > 0);
+  }, [focusToken, results.length]);
 
   useEffect(() => {
     const value = query.trim();
@@ -96,6 +104,7 @@ export default function CitySearch({ center, onPlaceSelect, onStationSelect }: P
       <div className="flex h-14 items-center rounded-2xl border border-ink/10 bg-white px-4 shadow-soft transition focus-within:border-forest/40 focus-within:ring-4 focus-within:ring-forest/10 dark:border-white/10 dark:bg-[#19241e] dark:focus-within:border-lime/40 sm:h-16 sm:rounded-[22px]">
         {loading ? <Loader2 className="shrink-0 animate-spin text-forest dark:text-lime" size={21} /> : <Search className="shrink-0 text-forest dark:text-lime" size={21} />}
         <input
+          ref={inputRef}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onFocus={() => results.length && setOpen(true)}
