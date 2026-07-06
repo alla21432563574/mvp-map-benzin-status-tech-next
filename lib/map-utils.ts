@@ -40,7 +40,12 @@ export function relativeTime(value: string, now = Date.now()) {
   if (minutes < 1) return "только что";
   if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")} назад`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} ${plural(hours, "час", "часа", "часов")} назад`;
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) {
+    return remainingMinutes > 0
+      ? `${hours} ч ${remainingMinutes} мин назад`
+      : `${hours} ${plural(hours, "час", "часа", "часов")} назад`;
+  }
   const days = Math.floor(hours / 24);
   return `${days} ${plural(days, "день", "дня", "дней")} назад`;
 }
