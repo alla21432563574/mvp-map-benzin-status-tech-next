@@ -46,15 +46,19 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   if (!client) return NextResponse.json({ error: "Supabase не настроен" }, { status: 503 });
 
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1_000).toISOString();
-  const [latestResult, recentResult] = await Promise.all([
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+  const [latestResult, recentResult, dayCountResult] = await Promise.all([
     client.from("station_reports")
       .select("id,status,fuel_type,fuel_types,queue,queue_text,comment,is_on_site,source,is_counted,created_at")
       .eq("station_id", id).order("created_at", { ascending: false }).limit(20),
     client.from("station_reports")
       .select("status,is_on_site").eq("station_id", id).gte("created_at", oneHourAgo).limit(1_000),
+    client.from("station_reports")
+      .select("id", { count: "exact", head: true }).eq("station_id", id).gte("created_at", dayAgo),
   ]);
   if (latestResult.error) return NextResponse.json({ error: latestResult.error.message }, { status: 500 });
   if (recentResult.error) return NextResponse.json({ error: recentResult.error.message }, { status: 500 });
+  if (dayCountResult.error) return NextResponse.json({ error: dayCountResult.error.message }, { status: 500 });
 
   const rows = (latestResult.data || []) as ReportRow[];
   const summary = (recentResult.data || []).reduce<StationReportSummary>((result, report) => {
@@ -79,7 +83,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     is_on_site: report.is_on_site,
   }));
 
-  return NextResponse.json({ reports, summary, ...confidence }, {
+  return NextResponse.json({ reports, summary, last24hCount: dayCountResult.count ?? 0, ...confidence }, {
     headers: { "Cache-Control": "public, max-age=15, s-maxage=30, stale-while-revalidate=60" },
   });
 }

@@ -172,6 +172,7 @@ export default function HomeMap() {
           confidence: Number(data.confidence || 0),
           confidence_status: data.status === "calculated" ? "calculated" : "insufficient",
           confirmation_count: reports.length,
+          last_24h_report_count: Number(data.last24hCount || 0),
           unique_confirmers: 0,
           last_confirmation_at: reports[0]?.confirmed_at || selected?.updated_at || new Date().toISOString(),
           source: reports[0]?.source || selected?.update_source || "benzin-status",

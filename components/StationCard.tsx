@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, Clock3, Flag, MapPin, Navigation, Share2, Star, X, XCircle } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Clock3, Flag, Fuel, Gauge, Loader2, MapPin, Navigation, Share2, ShieldCheck, Star, UsersRound, X, XCircle } from "lucide-react";
+import { useState, type ComponentType } from "react";
 import { brandInitials, formatDistance, relativeTime, stationDisplayStatus, type StationStatusKind } from "@/lib/map-utils";
 import { filterFuelKeys, filterFuelLabels, type Station, type StationDetails } from "@/lib/types";
 
@@ -24,14 +25,93 @@ type Props = {
   onShare: () => void;
 };
 
+type SituationKind = "available" | "queue" | "partial" | "unavailable";
+type QuickReportState = "idle" | "loading" | "done" | "error";
+
+const situationOptions: Array<{
+  kind: SituationKind;
+  title: string;
+  description: string;
+  icon: ComponentType<{ size?: number; className?: string }>;
+  classes: string;
+  iconClasses: string;
+}> = [
+  {
+    kind: "available",
+    title: "Есть топливо",
+    description: "Заправка работает в обычном режиме",
+    icon: Fuel,
+    classes: "hover:border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10",
+    iconClasses: "bg-emerald-100 text-emerald-500 dark:bg-emerald-500/15 dark:text-emerald-300",
+  },
+  {
+    kind: "queue",
+    title: "Очередь",
+    description: "Большая очередь на заправке",
+    icon: UsersRound,
+    classes: "hover:border-orange-300 hover:bg-orange-50 dark:hover:bg-orange-500/10",
+    iconClasses: "bg-orange-100 text-orange-500 dark:bg-orange-500/15 dark:text-orange-300",
+  },
+  {
+    kind: "partial",
+    title: "Мало топлива",
+    description: "Топливо есть, но в ограниченном количестве",
+    icon: Gauge,
+    classes: "hover:border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/10",
+    iconClasses: "bg-amber-100 text-amber-500 dark:bg-amber-500/15 dark:text-amber-300",
+  },
+  {
+    kind: "unavailable",
+    title: "Нет топлива",
+    description: "Топлива нет",
+    icon: Fuel,
+    classes: "hover:border-red-300 hover:bg-red-50 dark:hover:bg-red-500/10",
+    iconClasses: "bg-red-100 text-red-500 dark:bg-red-500/15 dark:text-red-300",
+  },
+];
+
 export default function StationCard({ station, details, detailsLoading, distance, favorite, now, onClose, onReport, onFavorite, onShare }: Props) {
+  const [quickReportState, setQuickReportState] = useState<QuickReportState>("idle");
+  const [quickReportKind, setQuickReportKind] = useState<SituationKind | null>(null);
   const routeUrl = `https://yandex.ru/maps/?rtext=~${station.latitude},${station.longitude}&rtt=auto`;
   const overall = stationDisplayStatus(station);
   const overallStyle = statusStyles[overall.kind];
   const hasEnoughConfirmations = details?.confidence_status === "calculated";
   const summary = details?.last_hour_summary;
   const summaryTotal = summary ? summary.available + summary.unavailable + summary.partial + summary.on_site : 0;
+  const reports24h = details?.last_24h_report_count ?? 0;
   const fuelName = (fuel: string) => ({ ai92: "АИ-92", ai95: "АИ-95", ai98: "АИ-98", ai100: "АИ-100", dt: "ДТ", gas: "Газ" }[fuel] || fuel.toUpperCase());
+
+  async function submitQuickReport(kind: SituationKind) {
+    if (quickReportState === "loading") return;
+    setQuickReportKind(kind);
+    setQuickReportState("loading");
+    const baseValues = {
+      ai92: typeof station.ai92 === "boolean" ? station.ai92 : null,
+      ai95: typeof station.ai95 === "boolean" ? station.ai95 : null,
+      diesel: typeof station.diesel === "boolean" ? station.diesel : null,
+      gas: typeof station.gas === "boolean" ? station.gas : null,
+    };
+    const payloadByKind: Record<SituationKind, typeof baseValues & { comment: string }> = {
+      available: { ai92: true, ai95: true, diesel: true, gas: true, comment: "Быстрая отметка: есть топливо" },
+      queue: { ...baseValues, comment: "Быстрая отметка: очередь на АЗС" },
+      partial: { ai92: null, ai95: null, diesel: null, gas: null, comment: "Быстрая отметка: мало топлива" },
+      unavailable: { ai92: false, ai95: false, diesel: false, gas: false, comment: "Быстрая отметка: нет топлива" },
+    };
+
+    try {
+      const response = await fetch("/api/reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ station_id: station.id, reporter_name: null, ...payloadByKind[kind] }),
+      });
+      if (!response.ok) throw new Error("Не удалось сохранить отметку");
+      setQuickReportState("done");
+      window.setTimeout(() => setQuickReportState("idle"), 4500);
+    } catch {
+      setQuickReportState("error");
+    }
+  }
 
   return (
     <section className="station-detail flex h-full min-h-0 flex-col bg-[#fbfcf9] dark:bg-[#121b16]">
@@ -50,6 +130,69 @@ export default function StationCard({ station, details, detailsLoading, distance
         <div className={`mt-5 rounded-2xl p-4 ${overallStyle.panel}`}>
           <p className="text-[10px] font-bold uppercase tracking-[.14em] opacity-60">Статус АЗС</p>
           <p className="mt-2 flex items-center gap-2 text-xl font-black"><i className={`h-3 w-3 rounded-full ${overallStyle.dot}`} />{overall.label}</p>
+        </div>
+
+        <div className="mt-3 rounded-[24px] border border-ink/[.08] bg-white p-4 shadow-sm dark:border-white/[.08] dark:bg-[#19241e]">
+          <div>
+            <h3 className="text-xl font-black tracking-tight">Что сейчас на АЗС?</h3>
+            <p className="mt-1 text-sm font-medium text-ink/50 dark:text-white/50">Выберите актуальную ситуацию</p>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2.5">
+            {situationOptions.map((option) => {
+              const Icon = option.icon;
+              const isLoading = quickReportState === "loading" && quickReportKind === option.kind;
+              return (
+                <button
+                  key={option.kind}
+                  type="button"
+                  disabled={quickReportState === "loading"}
+                  onClick={() => submitQuickReport(option.kind)}
+                  className={`min-h-[132px] rounded-[22px] border border-ink/[.08] bg-white p-3 text-left transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-70 dark:border-white/[.08] dark:bg-white/[.03] ${option.classes}`}
+                >
+                  <span className={`mx-auto grid h-12 w-12 place-items-center rounded-2xl ${option.iconClasses}`}>
+                    {isLoading ? <Loader2 className="animate-spin" size={24} /> : <Icon size={24} />}
+                  </span>
+                  <span className="mt-4 block text-center text-sm font-black leading-tight text-ink dark:text-white">{option.title}</span>
+                  <span className="mt-2 block text-center text-[11px] font-semibold leading-snug text-ink/50 dark:text-white/45">{option.description}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {quickReportState === "done" && (
+            <div className="mt-3 flex items-center gap-2 rounded-2xl bg-emerald-50 px-3 py-2.5 text-xs font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200">
+              <Check size={15} />Спасибо, отметка сохранена
+            </div>
+          )}
+          {quickReportState === "error" && (
+            <div className="mt-3 rounded-2xl bg-red-50 px-3 py-2.5 text-xs font-bold text-red-700 dark:bg-red-500/10 dark:text-red-200">
+              Не получилось сохранить отметку. Попробуйте ещё раз.
+            </div>
+          )}
+
+          <a href={routeUrl} target="_blank" rel="noreferrer" className="mt-4 flex items-center gap-3 rounded-[22px] border border-ink/[.08] bg-white p-3 transition hover:border-forest/25 hover:bg-forest/5 dark:border-white/[.08] dark:bg-white/[.03]">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300"><Navigation size={22} /></span>
+            <span className="min-w-0 flex-1"><span className="block text-base font-black">Маршрут до АЗС</span><span className="mt-0.5 block text-xs font-medium text-ink/45 dark:text-white/45">Откроется в выбранном приложении</span></span>
+            <span className="text-xl font-black text-ink/25 dark:text-white/25">›</span>
+          </a>
+
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="rounded-2xl border border-ink/[.08] bg-[#fbfcf9] p-3 dark:border-white/[.08] dark:bg-white/[.03]">
+              <ShieldCheck className="text-forest dark:text-lime" size={22} />
+              <p className="mt-2 text-xs text-ink/50 dark:text-white/45">Данные</p>
+              <p className="text-sm font-black leading-tight">подтверждённые отметки водителей</p>
+            </div>
+            <div className="rounded-2xl border border-ink/[.08] bg-[#fbfcf9] p-3 dark:border-white/[.08] dark:bg-white/[.03]">
+              <UsersRound className="text-ink/70 dark:text-white/70" size={22} />
+              <p className="mt-2 text-xs text-ink/50 dark:text-white/45">Отметок водителей</p>
+              <p className="text-2xl font-black">{detailsLoading ? "—" : reports24h}</p>
+              <p className="text-xs text-ink/45 dark:text-white/40">за последние 24 часа</p>
+            </div>
+            <div className="rounded-2xl border border-ink/[.08] bg-[#fbfcf9] p-3 sm:col-span-2 dark:border-white/[.08] dark:bg-white/[.03]">
+              <p className="flex items-center gap-2 text-sm font-bold text-ink/55 dark:text-white/55"><Clock3 size={15} />Обновлено {relativeTime(details?.last_confirmation_at || station.updated_at, now)}</p>
+            </div>
+          </div>
         </div>
 
         <div className="mt-3 rounded-2xl border border-ink/[.07] bg-white p-4 dark:border-white/[.07] dark:bg-[#19241e]">

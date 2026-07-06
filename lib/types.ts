@@ -75,6 +75,7 @@ export type StationDetails = {
   confidence: number;
   confidence_status?: "calculated" | "insufficient";
   confirmation_count: number;
+  last_24h_report_count?: number;
   unique_confirmers: number;
   last_confirmation_at: string;
   source: string;
