@@ -156,5 +156,5 @@ HTTP 409
 Ручная проверка:
 
 ```bash
-curl -H "Authorization: Bearer $CRON_SECRET" https://<project>.vercel.app/api/cron/scrape
+curl -H "Authorization: Bearer $CRON_SECRET" https://24benz.ru/api/cron/scrape
 ```
