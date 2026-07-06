@@ -5,8 +5,28 @@ import { createPublicClient } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
 const RANGE_SIZE = 1_000;
-const MAX_STATIONS = 100_000;
+const MAX_GLOBAL_PAGE_SIZE = 250;
 const MAX_VIEWPORT_STATIONS = 2_000;
+const STATION_SELECT = [
+  "id",
+  "city",
+  "name",
+  "address",
+  "latitude",
+  "longitude",
+  "brand",
+  "station_status",
+  "ai92",
+  "ai95",
+  "ai98",
+  "ai100",
+  "diesel",
+  "gas",
+  "has_queue",
+  "queue_count",
+  "updated_at",
+  "update_source",
+].join(",");
 
 type StationRow = Record<string, unknown> & { id: string };
 type LatestReportRow = {
@@ -34,6 +54,10 @@ function parseBbox(value: string | null) {
     ? [{ west: normalizedWest, east: normalizedEast }]
     : [{ west: normalizedWest, east: 180 }, { west: -180, east: normalizedEast }];
   return { west, south, east, north, longitudeRanges };
+}
+
+function asStationRows(data: unknown): StationRow[] {
+  return Array.isArray(data) ? data as StationRow[] : [];
 }
 
 async function withLatestReportStatus(
@@ -74,8 +98,41 @@ export async function GET(request: Request) {
   const requestedLimit = Math.min(viewport ? MAX_VIEWPORT_STATIONS : RANGE_SIZE, parsePositiveInteger(searchParams.get("limit"), RANGE_SIZE));
   const startedAt = performance.now();
 
+  const json = (body: unknown) => NextResponse.json(body, {
+    headers: {
+      "Cache-Control": "public, max-age=10, s-maxage=45, stale-while-revalidate=120",
+    },
+  });
+
+  if (!bbox) {
+    const safeLimit = Math.min(MAX_GLOBAL_PAGE_SIZE, parsePositiveInteger(searchParams.get("limit"), 100));
+    const page = requestedPage ?? 1;
+    const from = (page - 1) * safeLimit;
+    const { data, error } = await supabase
+      .from("stations")
+      .select(STATION_SELECT)
+      .eq("is_active", true)
+      .order("updated_at", { ascending: false })
+      .order("id")
+      .range(from, from + safeLimit - 1);
+    if (error) return NextResponse.json({ error: "Не удалось загрузить АЗС" }, { status: 500 });
+    const stations = await withLatestReportStatus(supabase, asStationRows(data));
+    return json({
+      stations,
+      bbox: null,
+      pagination: {
+        page,
+        limit: safeLimit,
+        returned: stations.length,
+        hasMore: stations.length === safeLimit,
+        bboxRequired: true,
+      },
+      elapsedMs: Math.round(performance.now() - startedAt),
+    });
+  }
+
   const createQuery = (range?: { west: number; east: number }) => {
-    let query = supabase.from("stations").select("*").eq("is_active", true);
+    let query = supabase.from("stations").select(STATION_SELECT).eq("is_active", true);
     if (bbox) {
       query = query
         .gte("longitude", range!.west)
@@ -93,18 +150,19 @@ export async function GET(request: Request) {
 
   if (viewport) {
     for (const range of ranges) {
-      let query = supabase.from("stations").select("*", { count: "exact" }).eq("is_active", true);
+      let query = supabase.from("stations").select(STATION_SELECT, { count: "exact" }).eq("is_active", true);
       if (bbox) query = query.gte("longitude", range!.west).lte("longitude", range!.east).gte("latitude", bbox.south).lte("latitude", bbox.north);
       const { data, error, count } = await query.order("name").order("id").range(0, requestedLimit - 1);
       if (error) return NextResponse.json({ error: "Не удалось загрузить АЗС" }, { status: 500 });
-      total += count ?? data.length;
-      for (const station of data) stationMap.set(String(station.id), station);
+      const rows = asStationRows(data);
+      total += count ?? rows.length;
+      for (const station of rows) stationMap.set(String(station.id), station);
     }
     const stations = [...stationMap.values()]
       .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru") || String(left.id).localeCompare(String(right.id)))
       .slice(0, requestedLimit);
     const enrichedStations = await withLatestReportStatus(supabase, stations as StationRow[]);
-    return NextResponse.json({
+    return json({
       stations: enrichedStations,
       bbox,
       pagination: { returned: stations.length, total, truncated: stations.length < total },
@@ -113,12 +171,13 @@ export async function GET(request: Request) {
   }
 
   for (const range of ranges) {
-    for (let from = 0; from < MAX_STATIONS; from += RANGE_SIZE) {
+    for (let from = 0; from < MAX_VIEWPORT_STATIONS; from += RANGE_SIZE) {
       const { data, error } = await createQuery(range).range(from, from + RANGE_SIZE - 1);
       if (error) return NextResponse.json({ error: "Не удалось загрузить АЗС" }, { status: 500 });
-      for (const station of data) stationMap.set(String(station.id), station);
-      if (data.length < RANGE_SIZE) break;
-      if (from + RANGE_SIZE >= MAX_STATIONS) truncated = true;
+      const rows = asStationRows(data);
+      for (const station of rows) stationMap.set(String(station.id), station);
+      if (rows.length < RANGE_SIZE) break;
+      if (from + RANGE_SIZE >= MAX_VIEWPORT_STATIONS) truncated = true;
     }
   }
   const allStations = [...stationMap.values()].sort((left, right) =>
@@ -129,7 +188,7 @@ export async function GET(request: Request) {
   total = allStations.length;
   const enrichedStations = await withLatestReportStatus(supabase, stations as StationRow[]);
 
-  return NextResponse.json({
+  return json({
     stations: enrichedStations,
     bbox,
     pagination: requestedPage === null
