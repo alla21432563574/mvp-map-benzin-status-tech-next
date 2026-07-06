@@ -389,23 +389,29 @@ export default function HomeMap() {
     }
   };
 
-  const sidebar = <div className="relative min-h-0 flex-1 overflow-hidden">
-    <div className={`absolute inset-0 flex flex-col transition-all duration-300 ease-out ${selected ? "pointer-events-none -translate-x-8 opacity-0" : "translate-x-0 opacity-100"}`} aria-hidden={Boolean(selected)}>
-      <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
-      <div className="flex items-center justify-between gap-3 border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{brandFiltered.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="shrink-0 text-[10px] text-ink/40 dark:text-white/40">Обновлено {latestUpdate ? relativeTime(latestUpdate, now) : "—"}</span></div>
-      <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} smartPick={smartPick} smartPickLoading={rankingLoading} scrollToken={smartPickScrollToken} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={selectStation} onFocusStation={focusSmartPick} /></div>
-    </div>
-    <div className={`absolute inset-0 transition-all duration-300 ease-out ${selected ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"}`} aria-hidden={!selected}>
-      {selected && <StationCard station={selected} details={stationDetails} detailsLoading={detailsLoading} distance={selectedDistance} favorite={favorites.has(selected.id)} now={now} onBack={() => { setSelected(null); setReporting(false); }} onReport={() => setReporting(true)} onFavorite={toggleFavorite} onShare={shareStation} />}
-    </div>
+  const closeStationDetail = () => {
+    setSelected(null);
+    setReporting(false);
+  };
+
+  const renderStationListPanel = () => <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
+    <div className="flex items-center justify-between gap-3 border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{brandFiltered.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="shrink-0 text-[10px] text-ink/40 dark:text-white/40">Обновлено {latestUpdate ? relativeTime(latestUpdate, now) : "—"}</span></div>
+    <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} smartPick={smartPick} smartPickLoading={rankingLoading} scrollToken={smartPickScrollToken} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={selectStation} onFocusStation={focusSmartPick} /></div>
   </div>;
+
+  const renderStationDetailPanel = () => selected ? <StationCard station={selected} details={stationDetails} detailsLoading={detailsLoading} distance={selectedDistance} favorite={favorites.has(selected.id)} now={now} onClose={closeStationDetail} onReport={() => setReporting(true)} onFavorite={toggleFavorite} onShare={shareStation} /> : null;
 
   return (
     <main className="h-[100dvh] overflow-hidden bg-cream text-ink transition-colors dark:bg-[#0e1511] dark:text-white lg:p-3">
       <div className="relative flex h-full overflow-hidden bg-white transition-colors dark:bg-[#121b16] lg:rounded-[28px] lg:border lg:border-ink/5 lg:shadow-soft dark:lg:border-white/10">
         <aside className="hidden w-[380px] shrink-0 flex-col border-r border-ink/8 bg-[#fbfcf9] dark:border-white/10 dark:bg-[#121b16] lg:flex">
           <div className="flex items-center justify-between border-b border-ink/8 bg-white px-5 py-5 dark:border-white/10 dark:bg-[#19241e]"><Link href="/" className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-forest text-lime"><Fuel size={22} /></span><span><b className="block text-lg leading-none">Есть топливо</b><small className="mt-1.5 block text-[10px] uppercase tracking-[.16em] text-ink/40 dark:text-white/40">АЗС России</small></span></Link><div className="flex items-center"><button onClick={toggleTheme} className="rounded-full p-2 text-ink/35 hover:bg-cream hover:text-forest dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-lime" aria-label={dark ? "Включить светлую тему" : "Включить тёмную тему"}>{dark ? <Sun size={19} /> : <Moon size={19} />}</button><Link href="/admin" className="rounded-full p-2 text-ink/35 hover:bg-cream hover:text-forest dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-lime" title="Панель модератора"><ShieldCheck size={19} /></Link></div></div>
-          {sidebar}
+          {renderStationListPanel()}
+        </aside>
+
+        <aside className={`hidden shrink-0 overflow-hidden border-r border-ink/8 bg-[#fbfcf9] transition-[width,opacity] duration-300 ease-out dark:border-white/10 dark:bg-[#121b16] lg:flex ${selected ? "w-[390px] opacity-100 xl:w-[420px]" : "w-0 opacity-0"}`} aria-hidden={!selected}>
+          <div className="h-full w-[390px] shrink-0 xl:w-[420px]">{renderStationDetailPanel()}</div>
         </aside>
 
         <section className={`relative min-w-0 flex-1 ${mobileSheetOpen || selected ? "mobile-sheet-open" : ""}`}>
@@ -427,7 +433,7 @@ export default function HomeMap() {
 
           <aside className={`absolute bottom-16 left-0 right-0 z-[500] flex flex-col overflow-hidden rounded-t-[28px] bg-[#fbfcf9] shadow-[0_-12px_40px_rgba(23,35,28,.16)] transition-[height,opacity] duration-300 dark:bg-[#121b16] lg:hidden ${selected ? "h-[78dvh] opacity-100" : mobileSheetOpen ? "h-[70dvh] opacity-100" : "pointer-events-none h-0 opacity-0"}`} aria-hidden={!mobileSheetOpen && !selected}>
             {!selected && <div className="flex h-14 shrink-0 items-center justify-between border-b border-ink/[.07] bg-white px-4 py-2.5 dark:border-white/[.07] dark:bg-[#19241e]"><span className="flex items-center gap-2 text-sm font-black"><Sparkles size={17} className="text-forest dark:text-lime" />Умный подбор</span><button onClick={() => setMobileSheetOpen(false)} className="grid h-9 w-9 place-items-center rounded-full bg-cream text-ink/50 dark:bg-white/5 dark:text-white/50" aria-label="Свернуть список АЗС"><ChevronDown size={18} /></button></div>}
-            {sidebar}
+            {selected ? renderStationDetailPanel() : renderStationListPanel()}
           </aside>
 
           <nav className="absolute bottom-0 left-0 right-0 z-[530] grid h-16 grid-cols-3 border-t border-ink/[.08] bg-white/95 px-2 pb-[env(safe-area-inset-bottom)] shadow-[0_-5px_20px_rgba(23,35,28,.08)] backdrop-blur dark:border-white/[.08] dark:bg-[#19241e]/95 lg:hidden" aria-label="Основная навигация">

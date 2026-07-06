@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft, CheckCircle2, Clock3, Flag, MapPin, Navigation, Share2, Star, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Flag, MapPin, Navigation, Share2, Star, X, XCircle } from "lucide-react";
 import { brandInitials, formatDistance, relativeTime, stationDisplayStatus, type StationStatusKind } from "@/lib/map-utils";
 import { filterFuelKeys, filterFuelLabels, type Station, type StationDetails } from "@/lib/types";
 
@@ -18,13 +18,13 @@ type Props = {
   distance: number;
   favorite: boolean;
   now: number;
-  onBack: () => void;
+  onClose: () => void;
   onReport: () => void;
   onFavorite: () => void;
   onShare: () => void;
 };
 
-export default function StationCard({ station, details, detailsLoading, distance, favorite, now, onBack, onReport, onFavorite, onShare }: Props) {
+export default function StationCard({ station, details, detailsLoading, distance, favorite, now, onClose, onReport, onFavorite, onShare }: Props) {
   const routeUrl = `https://yandex.ru/maps/?rtext=~${station.latitude},${station.longitude}&rtt=auto`;
   const overall = stationDisplayStatus(station);
   const overallStyle = statusStyles[overall.kind];
@@ -36,7 +36,7 @@ export default function StationCard({ station, details, detailsLoading, distance
   return (
     <section className="station-detail flex h-full min-h-0 flex-col bg-[#fbfcf9] dark:bg-[#121b16]">
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-ink/[.08] bg-white px-4 dark:border-white/10 dark:bg-[#19241e]">
-        <button onClick={onBack} className="flex items-center gap-2 rounded-full px-2 py-2 text-sm font-bold text-forest transition hover:bg-forest/10 dark:text-lime dark:hover:bg-white/10"><ArrowLeft size={18} />Назад</button>
+        <button onClick={onClose} className="flex items-center gap-2 rounded-full px-2 py-2 text-sm font-bold text-forest transition hover:bg-forest/10 dark:text-lime dark:hover:bg-white/10"><X size={18} />Закрыть</button>
         <button onClick={onFavorite} className={`grid h-9 w-9 place-items-center rounded-full transition ${favorite ? "bg-amber-100 text-amber-600" : "bg-cream text-ink/45 hover:text-amber-600 dark:bg-white/5 dark:text-white/45"}`} aria-label={favorite ? "Удалить из избранного" : "Добавить в избранное"}><Star size={17} fill={favorite ? "currentColor" : "none"} /></button>
       </div>
 
