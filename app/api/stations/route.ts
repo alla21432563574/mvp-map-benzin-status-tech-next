@@ -18,8 +18,6 @@ const STATION_SELECT = [
   "station_status",
   "ai92",
   "ai95",
-  "ai98",
-  "ai100",
   "diesel",
   "gas",
   "has_queue",
@@ -57,7 +55,12 @@ function parseBbox(value: string | null) {
 }
 
 function asStationRows(data: unknown): StationRow[] {
-  return Array.isArray(data) ? data as StationRow[] : [];
+  if (!Array.isArray(data)) return [];
+  return (data as StationRow[]).map((station) => ({
+    ai98: null,
+    ai100: null,
+    ...station,
+  }));
 }
 
 async function withLatestReportStatus(
