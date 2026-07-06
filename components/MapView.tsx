@@ -7,6 +7,9 @@ import { stationDisplayStatus } from "@/lib/map-utils";
 import type { MapBounds, Station } from "@/lib/types";
 
 export type MapTarget = { latitude: number; longitude: number; zoom: number; token: number };
+const TILE_URL = process.env.NEXT_PUBLIC_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const TILE_ATTRIBUTION = process.env.NEXT_PUBLIC_TILE_ATTRIBUTION || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+const BOUNDS_GRID = 1_000;
 
 type Props = {
   stations: Station[];
@@ -117,10 +120,10 @@ function BoundsWatcher({ onChange, onViewChange }: { onChange: (bounds: MapBound
     const bounds = map.getBounds();
     const center = map.getCenter();
     onChange({
-      west: Number(bounds.getWest().toFixed(5)),
-      south: Number(bounds.getSouth().toFixed(5)),
-      east: Number(bounds.getEast().toFixed(5)),
-      north: Number(bounds.getNorth().toFixed(5)),
+      west: Math.floor(bounds.getWest() * BOUNDS_GRID) / BOUNDS_GRID,
+      south: Math.floor(bounds.getSouth() * BOUNDS_GRID) / BOUNDS_GRID,
+      east: Math.ceil(bounds.getEast() * BOUNDS_GRID) / BOUNDS_GRID,
+      north: Math.ceil(bounds.getNorth() * BOUNDS_GRID) / BOUNDS_GRID,
     });
     onViewChange({ latitude: center.lat, longitude: center.lng }, map.getZoom());
   }, [map, onChange, onViewChange]);
@@ -136,8 +139,8 @@ export default function MapView({ stations, selectedId, recommendedId, onSelect,
   return (
     <MapContainer center={[initialCenter.latitude, initialCenter.longitude]} zoom={initialZoom} zoomControl={true} attributionControl={false} className="h-full w-full" minZoom={2}>
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution={TILE_ATTRIBUTION}
+        url={TILE_URL}
       />
       <AttributionControl prefix='<a href="https://leafletjs.com/" title="Leaflet">Leaflet</a>' position="bottomright" />
       <BoundsWatcher onChange={onBoundsChange} onViewChange={onViewChange} />

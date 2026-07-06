@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
+import { publicCacheHeaders } from "@/lib/cache-headers";
 import { createAdminClient, createPublicClient } from "@/lib/supabase";
 import type { StationHistoryEntry } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+const DETAILS_CACHE_HEADERS = publicCacheHeaders({
+  browserMaxAge: 15,
+  edgeMaxAge: 30,
+  staleWhileRevalidate: 60,
+});
 
 const labels: Record<StationHistoryEntry["status"], string> = {
   available: "Есть топливо",
@@ -48,5 +54,5 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     source: rows[0]?.source || "benzin-status",
     history,
     factors: { freshness: 0, confirmations: 0, consistency: confidence / 100, confirmers: 0, coverage: 0 },
-  } }, { headers: { "Cache-Control": "public, max-age=15, s-maxage=30" } });
+  } }, { headers: DETAILS_CACHE_HEADERS });
 }

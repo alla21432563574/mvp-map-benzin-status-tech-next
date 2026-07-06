@@ -78,6 +78,7 @@ export default function HomeMap() {
   const [rankingLoading, setRankingLoading] = useState(false);
   const [brandAffinity, setBrandAffinity] = useState<Record<string, number>>(initialBrandAffinity);
   const rankingCache = useRef(new Map<string, { signal: RankingSignal; updatedAt: string; expiresAt: number }>());
+  const hasLoadedStations = useRef(false);
   const initialLocationCheck = useRef(false);
   const [welcomeState, setWelcomeState] = useState<"checking" | "open" | "closed">("checking");
   const [locationHelpOpen, setLocationHelpOpen] = useState(false);
@@ -120,13 +121,14 @@ export default function HomeMap() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Не удалось загрузить АЗС");
         if (Array.isArray(data.stations)) setStations(data.stations);
+        hasLoadedStations.current = true;
         setTotalStations(Number(data.pagination?.total ?? data.stations?.length ?? 0));
       } catch (error) {
         if (error instanceof Error && error.name !== "AbortError") setNotice(error.message);
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
-    }, 220);
+    }, hasLoadedStations.current ? 220 : 0);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [bounds, dataRefreshToken, zoom]);
 

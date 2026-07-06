@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
+import { publicCacheHeaders } from "@/lib/cache-headers";
 
 export const dynamic = "force-dynamic";
+const GEOCODE_CACHE_HEADERS = publicCacheHeaders({
+  browserMaxAge: 86_400,
+  edgeMaxAge: 86_400,
+  staleWhileRevalidate: 604_800,
+});
 
 type NominatimPlace = {
   place_id: number;
@@ -43,7 +49,7 @@ export async function GET(request: Request) {
         longitude: Number(place.lon),
         boundingBox: place.boundingbox?.map(Number),
       }));
-    return NextResponse.json({ places }, { headers: { "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=604800" } });
+    return NextResponse.json({ places }, { headers: GEOCODE_CACHE_HEADERS });
   } catch {
     return NextResponse.json({ error: "Не удалось выполнить поиск" }, { status: 502 });
   }

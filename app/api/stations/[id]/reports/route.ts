@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
+import { publicCacheHeaders } from "@/lib/cache-headers";
 import { createAdminClient, createPublicClient } from "@/lib/supabase";
 import type { StationHistoryEntry, StationReportSummary } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+const REPORTS_CACHE_HEADERS = publicCacheHeaders({
+  browserMaxAge: 15,
+  edgeMaxAge: 30,
+  staleWhileRevalidate: 60,
+});
 
 type ReportRow = {
   id: string;
@@ -96,6 +102,6 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   }));
 
   return NextResponse.json({ reports, summary, last24hCount: dayCountResult.count ?? 0, ...confidence }, {
-    headers: { "Cache-Control": "public, max-age=15, s-maxage=30, stale-while-revalidate=60" },
+    headers: REPORTS_CACHE_HEADERS,
   });
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicCacheHeaders } from "@/lib/cache-headers";
 import { demoStations } from "@/lib/demo-data";
 import { createPublicClient } from "@/lib/supabase";
 
@@ -7,6 +8,11 @@ export const dynamic = "force-dynamic";
 const RANGE_SIZE = 1_000;
 const MAX_GLOBAL_PAGE_SIZE = 250;
 const MAX_VIEWPORT_STATIONS = 2_000;
+const STATIONS_CACHE_HEADERS = publicCacheHeaders({
+  browserMaxAge: 10,
+  edgeMaxAge: 45,
+  staleWhileRevalidate: 120,
+});
 const STATION_SELECT = [
   "id",
   "city",
@@ -88,7 +94,7 @@ async function withLatestReportStatus(
 
 export async function GET(request: Request) {
   const supabase = createPublicClient();
-  if (!supabase) return NextResponse.json({ stations: demoStations, demo: true });
+  if (!supabase) return NextResponse.json({ stations: demoStations, demo: true }, { headers: STATIONS_CACHE_HEADERS });
 
   const searchParams = new URL(request.url).searchParams;
   const bbox = parseBbox(searchParams.get("bbox"));
@@ -102,9 +108,7 @@ export async function GET(request: Request) {
   const startedAt = performance.now();
 
   const json = (body: unknown) => NextResponse.json(body, {
-    headers: {
-      "Cache-Control": "public, max-age=10, s-maxage=45, stale-while-revalidate=120",
-    },
+    headers: STATIONS_CACHE_HEADERS,
   });
 
   if (!bbox) {

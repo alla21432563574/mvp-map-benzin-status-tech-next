@@ -55,7 +55,9 @@ ADMIN_SECRET=длинный-случайный-пароль
 2. Добавьте переменные `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_SECRET` и `CRON_SECRET` в Project Settings → Environment Variables.
 3. Добавьте scraper-переменные из `.env.example`. `SUPABASE_DB_URL` в Vercel Function не нужен.
 4. Примените `supabase/migrations/20260704_add_cron_scraper.sql`.
-5. Запустите Deploy. `vercel.json` не содержит cron-задач, поэтому деплой совместим с Hobby-тарифом Vercel.
+5. Для пользователей в РФ держите Vercel Functions в ближайшем европейском регионе: в `vercel.json` уже задан `fra1`, чтобы API не исполнялся в `iad1` в США.
+6. Если тайлы OpenStreetMap в РФ открываются медленно, задайте `NEXT_PUBLIC_TILE_URL` и `NEXT_PUBLIC_TILE_ATTRIBUTION` на быстрый tile CDN вашего провайдера.
+7. Запустите Deploy. `vercel.json` не содержит cron-задач, поэтому деплой совместим с Hobby-тарифом Vercel.
 
 `CRON_SECRET` должен быть отдельным длинным случайным значением. Одно и то же значение нужно добавить в Vercel и GitHub Actions.
 
