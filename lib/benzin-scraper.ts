@@ -408,7 +408,9 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
       });
       const reportCursor = options.reportCursors?.get(String(raw.id));
       if (raw.lastReportAt == null) continue;
-      const shouldFetchReports = reportCursor == null
+      const shouldFetchReports = options.reportsMode === "backfill"
+        ? true
+        : reportCursor == null
         ? true
         : raw.lastReportAt > reportCursor;
       if (shouldFetchReports) {
@@ -453,8 +455,10 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
     for (const rawReport of detail.reports as PublicApiReport[]) {
       if (!Number.isFinite(rawReport.id) || !Number.isFinite(rawReport.createdAt)) continue;
       const stationCursor = options.reportCursors?.get(String(stationId));
-      const stationCutoff = stationCursor ?? 0;
-      if (stationCursor == null ? rawReport.createdAt < stationCutoff : rawReport.createdAt <= stationCutoff) continue;
+      if (options.reportsMode !== "backfill") {
+        const stationCutoff = stationCursor ?? 0;
+        if (stationCursor == null ? rawReport.createdAt < stationCutoff : rawReport.createdAt <= stationCutoff) continue;
+      }
       const fuelTypes = normalizeFuelTypes(rawReport.fuelTypes);
       const status = reportStatus(rawReport.status);
       const badges = reportBadges(rawReport, status, fuelTypes);
