@@ -11,8 +11,14 @@ type ReportRow = {
   fuel_types: string[] | null;
   queue: number | null;
   queue_text: string | null;
+  labels: string[] | null;
+  raw_text: string | null;
+  queue_status: string | null;
+  partial_reason: string | null;
+  is_corrected: boolean | null;
   comment: string | null;
   is_on_site: boolean | null;
+  is_reliable: boolean | null;
   source: string;
   is_counted: boolean | null;
   created_at: string;
@@ -49,7 +55,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
   const [latestResult, recentResult, dayCountResult] = await Promise.all([
     client.from("station_reports")
-      .select("id,status,fuel_type,fuel_types,queue,queue_text,comment,is_on_site,source,is_counted,created_at")
+      .select("id,status,fuel_type,fuel_types,queue,queue_text,labels,raw_text,queue_status,partial_reason,is_corrected,comment,is_on_site,is_reliable,source,is_counted,created_at")
       .eq("station_id", id).order("created_at", { ascending: false }).limit(20),
     client.from("station_reports")
       .select("status,is_on_site").eq("station_id", id).gte("created_at", oneHourAgo).limit(1_000),
@@ -79,8 +85,14 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     fuel_types: report.fuel_types || [],
     queue: report.queue,
     queue_text: report.queue_text,
+    labels: Array.isArray(report.labels) ? report.labels : [],
+    raw_text: report.raw_text,
+    queue_status: report.queue_status,
+    partial_reason: report.partial_reason,
+    is_corrected: report.is_corrected,
     comment: report.comment,
     is_on_site: report.is_on_site,
+    is_reliable: report.is_reliable,
   }));
 
   return NextResponse.json({ reports, summary, last24hCount: dayCountResult.count ?? 0, ...confidence }, {

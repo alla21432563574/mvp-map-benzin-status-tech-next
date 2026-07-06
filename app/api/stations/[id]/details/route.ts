@@ -20,7 +20,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   if (!client) return NextResponse.json({ error: "Supabase не настроен" }, { status: 503 });
 
   const { data, error } = await client.from("station_reports")
-    .select("id,status,fuel_type,fuel_types,queue,queue_text,comment,is_on_site,source,created_at")
+    .select("id,status,fuel_type,fuel_types,queue,queue_text,labels,raw_text,queue_status,partial_reason,is_corrected,comment,is_on_site,is_reliable,source,created_at")
     .eq("station_id", id).order("created_at", { ascending: false }).limit(10);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const rows = data || [];
@@ -34,7 +34,10 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     id: report.id, status: report.status as StationHistoryEntry["status"],
     label: labels[report.status as StationHistoryEntry["status"]], confirmed_at: report.created_at,
     source: report.source, fuel_type: report.fuel_type, fuel_types: report.fuel_types || [],
-    queue: report.queue, queue_text: report.queue_text, comment: report.comment, is_on_site: report.is_on_site,
+    queue: report.queue, queue_text: report.queue_text,
+    labels: Array.isArray(report.labels) ? report.labels : [],
+    raw_text: report.raw_text, queue_status: report.queue_status, partial_reason: report.partial_reason,
+    is_corrected: report.is_corrected, comment: report.comment, is_on_site: report.is_on_site, is_reliable: report.is_reliable,
   }));
   return NextResponse.json({ details: {
     confidence,

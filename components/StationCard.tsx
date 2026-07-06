@@ -12,6 +12,17 @@ const statusStyles: Record<StationStatusKind, { panel: string; dot: string }> = 
   unknown: { panel: "bg-ink/5 text-ink/55 dark:bg-white/5 dark:text-white/55", dot: "bg-gray-400" },
 };
 
+const badgeTone = (label: string) => {
+  const value = label.toLocaleLowerCase("ru").replace(/ё/g, "е");
+  if (value.includes("очеред")) return "bg-orange-100 text-orange-800 dark:bg-orange-500/15 dark:text-orange-200";
+  if (value.includes("отдельные") || value.includes("мало") || value.includes("лимит")) return "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200";
+  if (value.includes("исправ")) return "bg-violet-100 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200";
+  if (value.includes("на месте") || value.includes("надеж") || value.includes("надёж")) return "bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-200";
+  if (value.includes("нет топлива")) return "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-200";
+  if (value.includes("есть топливо")) return "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200";
+  return "bg-ink/[.06] text-ink/55 dark:bg-white/[.08] dark:text-white/55";
+};
+
 type Props = {
   station: Station;
   details: StationDetails | null;
@@ -81,6 +92,18 @@ export default function StationCard({ station, details, detailsLoading, distance
   const summaryTotal = summary ? summary.available + summary.unavailable + summary.partial + summary.on_site : 0;
   const reports24h = details?.last_24h_report_count ?? 0;
   const fuelName = (fuel: string) => ({ ai92: "АИ-92", ai95: "АИ-95", ai98: "АИ-98", ai100: "АИ-100", dt: "ДТ", gas: "Газ" }[fuel] || fuel.toUpperCase());
+  const historyLabels = (entry: StationDetails["history"][number]) => {
+    const values = new Set<string>();
+    for (const label of entry.labels || []) if (label && label !== entry.label) values.add(label);
+    for (const fuel of entry.fuel_types || []) values.add(fuelName(fuel));
+    if (entry.queue_text) values.add(entry.queue_text);
+    if (typeof entry.queue === "number") values.add(`очередь: ${entry.queue}`);
+    if (entry.partial_reason) values.add(entry.partial_reason);
+    if (entry.is_corrected) values.add("исправлено");
+    if (entry.is_on_site) values.add("На месте");
+    if (entry.is_reliable) values.add("Надёжный");
+    return [...values];
+  };
 
   async function submitQuickReport(kind: SituationKind) {
     if (quickReportState === "loading") return;
@@ -221,7 +244,10 @@ export default function StationCard({ station, details, detailsLoading, distance
             {summary!.partial > 0 && <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-bold text-amber-800"><AlertTriangle size={11} />{summary!.partial} «Частично»</span>}
             {summary!.on_site > 0 && <span className="flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-bold text-blue-800"><MapPin size={11} />{summary!.on_site} «На месте»</span>}
           </div></div>}
-          {detailsLoading ? <div className="mt-2 space-y-2">{[1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-ink/5 dark:bg-white/5" />)}</div> : details?.history.length ? <div className="mt-2 overflow-hidden rounded-2xl border border-ink/[.07] bg-white dark:border-white/[.07] dark:bg-[#19241e]">{details.history.map((entry) => <div key={entry.id} className="border-b border-ink/[.06] px-3 py-3 last:border-0 dark:border-white/[.06]"><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-xs font-bold"><i className={`h-2.5 w-2.5 rounded-full ${statusStyles[entry.status].dot}`} />{entry.label}</span><span className="flex shrink-0 items-center gap-1 text-[10px] text-ink/40 dark:text-white/40"><Clock3 size={10} />{relativeTime(entry.confirmed_at, now)}</span></div><div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] text-ink/50 dark:text-white/50">{(entry.fuel_types || []).length > 0 && <span>{entry.fuel_types!.map(fuelName).join(", ")}</span>}{entry.queue_text && <span>· {entry.queue_text}</span>}{typeof entry.queue === "number" && <span>· очередь: {entry.queue}</span>}{entry.is_on_site && <span className="rounded-full bg-blue-100 px-2 py-0.5 font-bold text-blue-800">На месте</span>}</div>{entry.comment && <p className="mt-1.5 text-xs leading-relaxed text-ink/60 dark:text-white/60">{entry.comment}</p>}</div>)}</div> : <p className="mt-2 rounded-xl bg-cream p-3 text-xs text-ink/45 dark:bg-white/5 dark:text-white/45">Свежих отметок пока нет.</p>}
+          {detailsLoading ? <div className="mt-2 space-y-2">{[1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-ink/5 dark:bg-white/5" />)}</div> : details?.history.length ? <div className="mt-2 overflow-hidden rounded-2xl border border-ink/[.07] bg-white dark:border-white/[.07] dark:bg-[#19241e]">{details.history.map((entry) => {
+            const badges = historyLabels(entry);
+            return <div key={entry.id} className="border-b border-ink/[.06] px-3 py-3 last:border-0 dark:border-white/[.06]"><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-xs font-bold"><i className={`h-2.5 w-2.5 rounded-full ${statusStyles[entry.status].dot}`} />{entry.label}</span><span className="flex shrink-0 items-center gap-1 text-[10px] text-ink/40 dark:text-white/40"><Clock3 size={10} />{relativeTime(entry.confirmed_at, now)}</span></div>{badges.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{badges.map((label) => <span key={label} className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badgeTone(label)}`}>{label}</span>)}</div>}{entry.comment && <p className="mt-1.5 text-xs leading-relaxed text-ink/60 dark:text-white/60">{entry.comment}</p>}</div>;
+          })}</div> : <p className="mt-2 rounded-xl bg-cream p-3 text-xs text-ink/45 dark:bg-white/5 dark:text-white/45">Свежих отметок пока нет.</p>}
         </div>
       </div>
 

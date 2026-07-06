@@ -60,8 +60,14 @@ export type StationHistoryEntry = {
   fuel_types?: string[];
   queue?: number | null;
   queue_text?: string | null;
+  labels?: string[];
+  raw_text?: string | null;
+  queue_status?: string | null;
+  partial_reason?: string | null;
+  is_corrected?: boolean | null;
   comment?: string | null;
   is_on_site?: boolean | null;
+  is_reliable?: boolean | null;
 };
 
 export type StationReportSummary = {

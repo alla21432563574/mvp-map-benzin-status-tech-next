@@ -227,8 +227,14 @@ create table if not exists public.station_reports (
   fuel_types text[],
   queue integer check (queue is null or queue >= 0),
   queue_text text,
+  labels jsonb,
+  raw_text text,
+  queue_status text,
+  partial_reason text,
+  is_corrected boolean,
   comment text,
   is_on_site boolean,
+  is_reliable boolean,
   source text not null,
   is_counted boolean,
   created_at timestamptz not null,
@@ -236,6 +242,7 @@ create table if not exists public.station_reports (
   unique (source, external_id)
 );
 create index if not exists station_reports_station_created_idx on public.station_reports(station_id, created_at desc);
+create index if not exists station_reports_labels_gin_idx on public.station_reports using gin (labels);
 alter table public.station_reports enable row level security;
 create policy "Public station reports are readable" on public.station_reports for select using (true);
 grant select on table public.station_reports to anon, authenticated;

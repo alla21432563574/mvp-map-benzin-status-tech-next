@@ -48,8 +48,14 @@ export type ScrapedReport = {
   fuelTypes: string[];
   queue: number | null;
   queueText: string | null;
+  labels: string[];
+  rawText: string | null;
+  queueStatus: string | null;
+  partialReason: string | null;
+  isCorrected: boolean | null;
   comment: string | null;
   isOnSite: boolean | null;
+  isReliable: boolean | null;
   isCounted: boolean | null;
   source: typeof BENZIN_SOURCE;
   createdAt: string;
@@ -73,9 +79,17 @@ type PublicApiReport = {
   id: number;
   status: string;
   fuelTypes?: unknown;
+  limitLiters?: unknown;
+  canister?: unknown;
+  queue?: unknown;
+  queueStatus?: unknown;
+  queueText?: unknown;
+  labels?: unknown;
+  rawText?: unknown;
   comment?: unknown;
   createdAt: number;
   counted?: unknown;
+  authorVerified?: unknown;
   geoTrust?: unknown;
 };
 
@@ -213,6 +227,94 @@ function normalizeFuelTypes(value: unknown) {
   if (!Array.isArray(value)) return [];
   const allowed = new Set(["ai92", "ai95", "ai98", "ai100", "dt", "gas"]);
   return [...new Set(value.filter((fuel): fuel is string => typeof fuel === "string" && allowed.has(fuel)))];
+}
+
+const donorFuelLabels: Record<string, string> = {
+  ai92: "АИ-92",
+  ai95: "АИ-95",
+  ai98: "АИ-98",
+  ai100: "АИ-100",
+  dt: "ДТ",
+  gas: "Газ",
+};
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeQueueStatus(value: unknown) {
+  const text = stringValue(value);
+  if (!text) return null;
+  const normalized = normalizeText(text);
+  if (["small", "low", "short", "minor", "небольшая очередь", "небольшая"].includes(normalized)) return "small";
+  if (["large", "high", "long", "big", "большая очередь", "большая"].includes(normalized)) return "large";
+  if (["none", "no", "noqueue", "без очереди", "нет очереди"].includes(normalized)) return "none";
+  return text;
+}
+
+function queueStatusLabel(value: string | null) {
+  if (value === "small") return "Небольшая очередь";
+  if (value === "large") return "Большая очередь";
+  if (value === "none") return "Без очереди";
+  return value;
+}
+
+function normalizeLabels(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((label) => stringValue(label) ? [stringValue(label)!] : []);
+}
+
+function reportStatusLabel(status: ScrapedReport["status"]) {
+  if (status === "available") return "Есть топливо";
+  if (status === "partial") return "Мало топлива";
+  if (status === "unavailable") return "Нет топлива";
+  return "Нет данных";
+}
+
+function reportBadges(rawReport: PublicApiReport, status: ScrapedReport["status"], fuelTypes: string[]) {
+  const labels = new Set<string>(normalizeLabels(rawReport.labels));
+  labels.add(reportStatusLabel(status));
+  for (const fuel of fuelTypes) labels.add(donorFuelLabels[fuel] || fuel.toUpperCase());
+
+  const limitLiters = numberValue(rawReport.limitLiters);
+  const canister = stringValue(rawReport.canister);
+  const queueStatus = normalizeQueueStatus(rawReport.queueStatus ?? rawReport.queue);
+  const queueText = stringValue(rawReport.queueText) || queueStatusLabel(queueStatus);
+  let partialReason: string | null = null;
+
+  if (status === "partial") {
+    partialReason = fuelTypes.length > 0 ? "Отдельные марки" : "Мало топлива";
+    labels.add(partialReason);
+  }
+  if (limitLiters !== null) {
+    labels.add(`лимит ${limitLiters} л`);
+    partialReason = partialReason ? `${partialReason}; лимит ${limitLiters} л` : `лимит ${limitLiters} л`;
+  }
+  if (canister === "yes") labels.add("можно в канистру");
+  if (canister === "no") labels.add("только в бак");
+  if (queueText) labels.add(queueText);
+  if (rawReport.geoTrust === "near") labels.add("На месте");
+  if (rawReport.authorVerified === true) labels.add("Надёжный");
+  if (rawReport.counted === false) labels.add("исправлено");
+
+  const rawText = [
+    ...labels,
+    stringValue(rawReport.comment),
+  ].filter(Boolean).join(" · ") || null;
+
+  return {
+    labels: [...labels],
+    rawText,
+    queueStatus,
+    queueText,
+    partialReason,
+    isCorrected: typeof rawReport.counted === "boolean" ? rawReport.counted === false : null,
+    isReliable: typeof rawReport.authorVerified === "boolean" ? rawReport.authorVerified : null,
+  };
 }
 
 export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise<BenzinScrapeResult> {
@@ -354,16 +456,24 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
       const stationCutoff = stationCursor ?? 0;
       if (stationCursor == null ? rawReport.createdAt < stationCutoff : rawReport.createdAt <= stationCutoff) continue;
       const fuelTypes = normalizeFuelTypes(rawReport.fuelTypes);
+      const status = reportStatus(rawReport.status);
+      const badges = reportBadges(rawReport, status, fuelTypes);
       reports.push({
         externalId: String(rawReport.id),
         stationExternalKey: String(stationId),
-        status: reportStatus(rawReport.status),
+        status,
         fuelType: fuelTypes.length === 1 ? fuelTypes[0] : null,
         fuelTypes,
-        queue: null,
-        queueText: null,
+        queue: numberValue(rawReport.queue),
+        queueText: badges.queueText,
+        labels: badges.labels,
+        rawText: badges.rawText,
+        queueStatus: badges.queueStatus,
+        partialReason: badges.partialReason,
+        isCorrected: badges.isCorrected,
         comment: typeof rawReport.comment === "string" && rawReport.comment.trim() ? rawReport.comment.trim() : null,
         isOnSite: rawReport.geoTrust === "near" ? true : typeof rawReport.geoTrust === "string" ? false : null,
+        isReliable: badges.isReliable,
         isCounted: typeof rawReport.counted === "boolean" ? rawReport.counted : null,
         source: BENZIN_SOURCE,
         createdAt: new Date(rawReport.createdAt).toISOString(),
