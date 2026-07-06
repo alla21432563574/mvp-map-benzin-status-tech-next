@@ -21,7 +21,6 @@ const STATION_SELECT = [
   "diesel",
   "gas",
   "has_queue",
-  "queue_count",
   "updated_at",
   "update_source",
 ].join(",");
@@ -59,6 +58,7 @@ function asStationRows(data: unknown): StationRow[] {
   return (data as StationRow[]).map((station) => ({
     ai98: null,
     ai100: null,
+    queue_count: null,
     ...station,
   }));
 }
