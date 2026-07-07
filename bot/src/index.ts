@@ -4,10 +4,10 @@ import { Context, Markup, Telegraf } from "telegraf";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!token || !supabaseUrl || !supabaseKey) {
-  throw new Error("Заполните TELEGRAM_BOT_TOKEN, SUPABASE_URL и SUPABASE_ANON_KEY");
+  throw new Error("Заполните TELEGRAM_BOT_TOKEN, SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY");
 }
 
 const bot = new Telegraf(token);
@@ -50,7 +50,7 @@ function session(chatId: number) {
 }
 
 async function getCities() {
-  const { data, error } = await supabase.from("stations").select("city").order("city");
+  const { data, error } = await supabase.from("stations").select("city").eq("is_active", true).order("city");
   if (error) throw error;
   return [...new Set((data ?? []).map((row) => row.city).filter(Boolean))];
 }
@@ -60,9 +60,20 @@ async function getStations(city: string) {
     .from("stations")
     .select("id,city,name,address,brand,latitude,longitude")
     .eq("city", city)
+    .eq("is_active", true)
     .order("name");
   if (error) throw error;
   return (data ?? []) as Station[];
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[char]!));
 }
 
 function cityKeyboard(cities: string[]) {
@@ -158,7 +169,7 @@ bot.action(/^station:(.+)$/, async (ctx) => {
   current.station = station;
   current.fuels.clear();
   await ctx.editMessageText(
-    `<b>${station.brand} — ${station.name}</b>\n${station.address}\n\nОтметьте всё топливо, которое сейчас есть:`,
+    `<b>${escapeHtml(station.brand)} — ${escapeHtml(station.name)}</b>\n${escapeHtml(station.address)}\n\nОтметьте всё топливо, которое сейчас есть:`,
     { parse_mode: "HTML", ...fuelKeyboard(current.fuels) },
   );
 });

@@ -323,6 +323,7 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
   const gridStep = Math.max(0.5, Math.min(10, options.gridStepDegrees || 4));
   const requestDelayMs = Math.max(100, Math.min(5_000, options.requestDelayMs ?? 250));
   const maxStations = Math.max(100, Math.min(5_000, options.maxStations));
+  const reportSinceMs = options.reportSinceMs ?? 0;
   const bounds = mode === "russia" ? { ...RUSSIA_BOUNDS, depth: 0 } : parseBounds(options.bounds);
   if (!Number.isFinite(options.latitude) || !Number.isFinite(options.longitude)) {
     throw new Error("Некорректные координаты SCRAPER_CITY_CENTER_LAT/LNG");
@@ -331,7 +332,7 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
   const pendingTiles = mode === "russia" ? createGrid(bounds, gridStep).filter(tileIntersectsRussia) : [bounds];
   const stations: ScrapedStation[] = [];
   const reports: ScrapedReport[] = [];
-  const reportCandidates = new Map<number, number>();
+  const reportCandidates = new Map<number, { lastReportAt: number; hasCursor: boolean }>();
   const ids = new Set<number>();
   const coordinates = new Set<string>();
   const nameAddresses = new Set<string>();
@@ -406,15 +407,16 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
         sourceUpdatedAt: raw.lastReportAt ? new Date(raw.lastReportAt).toISOString() : null,
         importedAt, rawText: JSON.stringify(raw),
       });
-      const reportCursor = options.reportCursors?.get(String(raw.id));
       if (raw.lastReportAt == null) continue;
+      const reportCursor = options.reportCursors?.get(String(raw.id));
+      const hasCursor = reportCursor !== undefined;
       const shouldFetchReports = options.reportsMode === "backfill"
-        ? true
-        : reportCursor == null
-        ? true
+        ? !hasCursor || raw.lastReportAt > reportCursor
+        : !hasCursor
+        ? raw.lastReportAt >= reportSinceMs
         : raw.lastReportAt > reportCursor;
       if (shouldFetchReports) {
-        reportCandidates.set(raw.id, raw.lastReportAt);
+        reportCandidates.set(raw.id, { lastReportAt: raw.lastReportAt, hasCursor });
       }
     }
     if (requestCount % 25 === 0 || pendingTiles.length === 0) {
@@ -422,7 +424,12 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
     }
   }
 
-  const candidates = [...reportCandidates.entries()].sort((left, right) => right[1] - left[1]);
+  const candidates = [...reportCandidates.entries()].sort((left, right) => {
+    if (options.reportsMode === "backfill" && left[1].hasCursor !== right[1].hasCursor) {
+      return left[1].hasCursor ? 1 : -1;
+    }
+    return right[1].lastReportAt - left[1].lastReportAt;
+  });
   const reportRequestLimit = Math.max(1, Math.min(10_000, options.maxReportStationRequests ?? 2_000));
   const processedCandidates = candidates.slice(0, reportRequestLimit);
   const successfulCandidates: Array<[number, number]> = [];
@@ -451,7 +458,7 @@ export async function fetchBenzinStations(options: BenzinScrapeOptions): Promise
       reportErrors.push(`station ${stationId}: detail API не вернул массив reports`);
       continue;
     }
-    successfulCandidates.push([stationId, reportCandidates.get(stationId)!]);
+    successfulCandidates.push([stationId, reportCandidates.get(stationId)!.lastReportAt]);
     for (const rawReport of detail.reports as PublicApiReport[]) {
       if (!Number.isFinite(rawReport.id) || !Number.isFinite(rawReport.createdAt)) continue;
       const stationCursor = options.reportCursors?.get(String(stationId));

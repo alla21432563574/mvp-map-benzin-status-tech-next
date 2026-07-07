@@ -12,17 +12,17 @@
 cp .env.example .env
 ```
 
-Заполните `TELEGRAM_BOT_TOKEN`, `SUPABASE_URL` и публичный `SUPABASE_ANON_KEY`. Service role ключ боту не нужен: RLS разрешает только чтение АЗС и добавление отчётов со статусом `pending`.
+Заполните `TELEGRAM_BOT_TOKEN`, `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY`. Бот работает как доверенный backend-процесс: публичная anon-вставка в `pending_reports` закрыта, чтобы отчёты нельзя было спамить напрямую через Supabase API.
 
 ## Запуск
 
 ```bash
 cd bot
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
-Для обычного запуска без слежения за файлами используйте `npm start`.
+Для обычного запуска без слежения за файлами используйте `pnpm start`.
 
 Бот работает в long polling режиме, поэтому его нужно размещать как постоянно запущенный Node.js-процесс (например, Railway, Render worker, Fly.io или VPS). Vercel подходит для веб-приложения, но не для этого long polling процесса.
 
