@@ -6,6 +6,7 @@ import { createPublicClient } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
 const RANGE_SIZE = 1_000;
+const LATEST_REPORT_CHUNK_SIZE = 250;
 const MAX_GLOBAL_PAGE_SIZE = 250;
 const MAX_VIEWPORT_STATIONS = 2_000;
 const STATIONS_CACHE_HEADERS = publicCacheHeaders({
@@ -61,12 +62,7 @@ function parseBbox(value: string | null) {
 
 function asStationRows(data: unknown): StationRow[] {
   if (!Array.isArray(data)) return [];
-  return (data as StationRow[]).map((station) => ({
-    ai98: null,
-    ai100: null,
-    queue_count: null,
-    ...station,
-  }));
+  return (data as StationRow[]).map((station) => ({ queue_count: null, ...station }));
 }
 
 async function withLatestReportStatus(
@@ -74,16 +70,17 @@ async function withLatestReportStatus(
   stations: StationRow[],
 ) {
   if (!stations.length) return stations;
-  const stationIds = stations.map((station) => station.id).filter(Boolean);
-  const { data, error } = await supabase
-    .from("latest_station_reports")
-    .select("station_id,status,created_at")
-    .in("station_id", stationIds);
-
-  if (error || !data) return stations;
-
+  const stationIds = [...new Set(stations.map((station) => station.id).filter(Boolean))];
   const latestByStation = new Map<string, LatestReportRow>();
-  for (const report of data as LatestReportRow[]) latestByStation.set(report.station_id, report);
+  for (let index = 0; index < stationIds.length; index += LATEST_REPORT_CHUNK_SIZE) {
+    const ids = stationIds.slice(index, index + LATEST_REPORT_CHUNK_SIZE);
+    const { data, error } = await supabase
+      .from("latest_station_reports")
+      .select("station_id,status,created_at")
+      .in("station_id", ids);
+    if (error || !data) continue;
+    for (const report of data as LatestReportRow[]) latestByStation.set(report.station_id, report);
+  }
   return stations.map((station) => {
     const latest = latestByStation.get(station.id);
     return latest

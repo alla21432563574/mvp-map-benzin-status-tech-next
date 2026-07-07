@@ -203,8 +203,8 @@ export default function HomeMap() {
 
   const rankingCandidates = useMemo(() => {
     const origin = userLocation ?? center;
-    return brandFiltered.map((station) => ({ station, distance: distanceKm(origin, station) })).sort((left, right) => left.distance - right.distance).slice(0, 250);
-  }, [brandFiltered, center, userLocation]);
+    return visible.map((station) => ({ station, distance: distanceKm(origin, station) })).sort((left, right) => left.distance - right.distance).slice(0, 250);
+  }, [center, userLocation, visible]);
   const rankingCandidateKey = rankingCandidates.map(({ station }) => `${station.id}:${station.updated_at}`).join("|");
 
   useEffect(() => {
@@ -399,7 +399,7 @@ export default function HomeMap() {
 
   const renderStationListPanel = () => <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <FilterPanel fuels={fuels} brands={brands} onFuelsChange={setFuels} onBrandsChange={setBrands} />
-    <div className="flex items-center justify-between gap-3 border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{brandFiltered.length.toLocaleString("ru-RU")} АЗС рядом</b><span className="shrink-0 text-[10px] text-ink/40 dark:text-white/40">Обновлено {latestUpdate ? relativeTime(latestUpdate, now) : "—"}</span></div>
+    <div className="flex items-center justify-between gap-3 border-b border-ink/8 px-4 py-3 text-xs dark:border-white/10 lg:px-5"><b>{(fuels.size ? visible.length : brandFiltered.length).toLocaleString("ru-RU")} АЗС рядом</b><span className="shrink-0 text-[10px] text-ink/40 dark:text-white/40">Обновлено {latestUpdate ? relativeTime(latestUpdate, now) : "—"}</span></div>
     <div className="min-h-0 flex-1 overflow-y-auto"><StationList items={listItems} smartPick={smartPick} smartPickLoading={rankingLoading} scrollToken={smartPickScrollToken} loading={loading} selectedId={selected?.id ?? null} selectedFuels={fuels} now={now} onSelect={selectStation} onFocusStation={focusSmartPick} /></div>
   </div>;
 

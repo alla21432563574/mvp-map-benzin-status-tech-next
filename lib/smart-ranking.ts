@@ -1,5 +1,5 @@
 import { brandOptions, stationBrandId, stationDisplayStatus } from "./map-utils";
-import { filterFuelLabels, type FilterFuelKey, type Station } from "./types";
+import { filterFuelKeys, filterFuelLabels, type FilterFuelKey, type Station } from "./types";
 
 export type RankingSignal = {
   confirmationCount: number;
@@ -59,13 +59,13 @@ function freshness(value: string, now: number) {
 export function calculateStationConfidence(station: Station, signal: RankingSignal | undefined, now: number) {
   const confirmationCount = signal?.confirmationCount ?? 0;
   const uniqueConfirmers = signal?.uniqueConfirmers ?? 0;
-  const knownFuelCount = [station.ai92, station.ai95, station.ai98, station.ai100, station.diesel, station.gas].filter((value) => typeof value === "boolean").length;
+  const knownFuelCount = filterFuelKeys.filter((fuel) => typeof station[fuel] === "boolean").length;
   const factors: ConfidenceFactors = {
     freshness: freshness(signal?.lastConfirmationAt || station.updated_at, now),
     confirmations: Math.min(1, Math.log2(confirmationCount + 1) / Math.log2(16)),
     consistency: confirmationCount ? signal?.consistency ?? 0 : 0,
     confirmers: Math.min(1, uniqueConfirmers / 5),
-    coverage: knownFuelCount / 6,
+    coverage: knownFuelCount / filterFuelKeys.length,
   };
   // Процент — не эвристическая «магия», а доля совпавших статусов среди
   // последних реальных отметок. Без двух отметок точность не показывается.

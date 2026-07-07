@@ -3,7 +3,7 @@
 import { AlertTriangle, Check, CheckCircle2, Clock3, Flag, Fuel, Gauge, Loader2, MapPin, Navigation, Share2, ShieldCheck, Star, UsersRound, X, XCircle } from "lucide-react";
 import { useState, type ComponentType } from "react";
 import { brandInitials, formatDistance, relativeTime, stationDisplayStatus, type StationStatusKind } from "@/lib/map-utils";
-import { filterFuelKeys, filterFuelLabels, type Station, type StationDetails } from "@/lib/types";
+import { filterFuelKeys, filterFuelLabels, type FuelKey, type Station, type StationDetails, type StationStatus } from "@/lib/types";
 
 const statusStyles: Record<StationStatusKind, { panel: string; dot: string }> = {
   available: { panel: "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200", dot: "bg-emerald-500" },
@@ -109,17 +109,17 @@ export default function StationCard({ station, details, detailsLoading, distance
     if (quickReportState === "loading") return;
     setQuickReportKind(kind);
     setQuickReportState("loading");
-    const baseValues = {
-      ai92: typeof station.ai92 === "boolean" ? station.ai92 : null,
-      ai95: typeof station.ai95 === "boolean" ? station.ai95 : null,
-      diesel: typeof station.diesel === "boolean" ? station.diesel : null,
-      gas: typeof station.gas === "boolean" ? station.gas : null,
+    const noFuelChanges: Record<FuelKey, boolean | null> = {
+      ai92: null,
+      ai95: null,
+      diesel: null,
+      gas: null,
     };
-    const payloadByKind: Record<SituationKind, typeof baseValues & { comment: string }> = {
-      available: { ai92: true, ai95: true, diesel: true, gas: true, comment: "Быстрая отметка: есть топливо" },
-      queue: { ...baseValues, comment: "Быстрая отметка: очередь на АЗС" },
-      partial: { ai92: null, ai95: null, diesel: null, gas: null, comment: "Быстрая отметка: мало топлива" },
-      unavailable: { ai92: false, ai95: false, diesel: false, gas: false, comment: "Быстрая отметка: нет топлива" },
+    const payloadByKind: Record<SituationKind, typeof noFuelChanges & { station_status: StationStatus; has_queue: boolean | null; comment: string }> = {
+      available: { ...noFuelChanges, station_status: "available", has_queue: false, comment: "Быстрая отметка: есть топливо" },
+      queue: { ...noFuelChanges, station_status: "available", has_queue: true, comment: "Быстрая отметка: очередь на АЗС" },
+      partial: { ...noFuelChanges, station_status: "partial", has_queue: null, comment: "Быстрая отметка: мало топлива" },
+      unavailable: { ai92: false, ai95: false, diesel: false, gas: false, station_status: "unavailable", has_queue: false, comment: "Быстрая отметка: нет топлива" },
     };
 
     try {

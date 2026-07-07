@@ -1,8 +1,9 @@
 export const fuelKeys = ["ai92", "ai95", "diesel", "gas"] as const;
 export type FuelKey = (typeof fuelKeys)[number];
 
-export const filterFuelKeys = ["ai92", "ai95", "ai98", "ai100", "diesel", "gas"] as const;
+export const filterFuelKeys = ["ai92", "ai95", "diesel", "gas"] as const;
 export type FilterFuelKey = (typeof filterFuelKeys)[number];
+export type StationStatus = "available" | "partial" | "unavailable" | "unknown";
 
 export type MapBounds = {
   west: number;
@@ -21,8 +22,6 @@ export const fuelLabels: Record<FuelKey, string> = {
 export const filterFuelLabels: Record<FilterFuelKey, string> = {
   ai92: "АИ-92",
   ai95: "АИ-95",
-  ai98: "АИ-98",
-  ai100: "АИ-100",
   diesel: "ДТ",
   gas: "Газ",
 };
@@ -35,16 +34,14 @@ export type Station = {
   latitude: number;
   longitude: number;
   brand: string;
-  station_status?: "available" | "partial" | "unavailable" | "unknown" | null;
+  station_status?: StationStatus | null;
   ai92: boolean | null;
   ai95: boolean | null;
-  ai98?: boolean | null;
-  ai100?: boolean | null;
   diesel: boolean | null;
   gas: boolean | null;
   has_queue?: boolean | null;
   queue_count?: number | null;
-  latest_report_status?: "available" | "partial" | "unavailable" | "unknown" | null;
+  latest_report_status?: StationStatus | null;
   latest_report_at?: string | null;
   updated_at: string;
   update_source: string;
@@ -103,6 +100,8 @@ export type PendingReport = {
   ai95: boolean | null;
   diesel: boolean | null;
   gas: boolean | null;
+  station_status?: StationStatus | null;
+  has_queue?: boolean | null;
   reporter_name: string | null;
   comment: string | null;
   source: string;

@@ -70,6 +70,8 @@ create table public.pending_reports (
   ai95 boolean,
   diesel boolean,
   gas boolean,
+  station_status text check (station_status in ('available', 'partial', 'unavailable', 'unknown')),
+  has_queue boolean,
   reporter_name text check (char_length(reporter_name) <= 80),
   comment text check (char_length(comment) <= 500),
   source text not null default 'Пользователь',
@@ -93,7 +95,8 @@ alter table public.pending_reports enable row level security;
 alter table public.scrape_logs enable row level security;
 
 create policy "Публичное чтение АЗС" on public.stations for select using (true);
-create policy "Публичная отправка сообщений" on public.pending_reports for insert with check (status = 'pending');
+-- Отчёты принимаются только через серверный API/service role: так можно
+-- rate-limit'ить и дедуплицировать отправку перед записью в очередь.
 
 -- Вызывается серверным API с service-role ключом.
 create or replace function public.moderate_report(
@@ -111,8 +114,16 @@ begin
   select * into r from public.pending_reports where id = p_report_id and status = 'pending' for update;
   if not found then raise exception 'Pending report not found'; end if;
   if p_action = 'approved' then
-    update public.stations set ai92 = r.ai92, ai95 = r.ai95, diesel = r.diesel, gas = r.gas,
-      updated_at = now(), update_source = r.source where id = r.station_id;
+    update public.stations set
+      ai92 = coalesce(r.ai92, ai92),
+      ai95 = coalesce(r.ai95, ai95),
+      diesel = coalesce(r.diesel, diesel),
+      gas = coalesce(r.gas, gas),
+      station_status = coalesce(r.station_status, station_status),
+      has_queue = coalesce(r.has_queue, has_queue),
+      updated_at = now(),
+      update_source = r.source
+    where id = r.station_id;
   end if;
   update public.pending_reports set status = p_action, moderator_note = p_moderator_note,
     moderated_at = now() where id = p_report_id;
