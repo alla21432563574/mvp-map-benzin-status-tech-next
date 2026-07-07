@@ -18,9 +18,9 @@
 Понадобится Node.js 20.9 или новее.
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env.local
-npm run dev
+pnpm dev
 ```
 
 Откройте [http://localhost:3000](http://localhost:3000). Без заполненного `.env.local` карта работает с демонстрационными данными; отправка статуса имитируется и ничего не сохраняет.
@@ -102,13 +102,13 @@ SCRAPE_LOG_RETENTION_DAYS=30
 Обычный режим запускает импорт сразу, затем повторяет его не чаще указанного интервала (минимум 60 секунд):
 
 ```bash
-npm run scrape:benzin
+pnpm scrape:benzin
 ```
 
 Для одного наглядного запуска:
 
 ```bash
-npm run scrape:benzin:debug
+pnpm scrape:benzin:debug
 ```
 
 `SCRAPER_MODE=russia` обходит территорию 41…82° с.ш. и долготы `19…180` плюс `-180…-169` для Чукотки. Тайл, достигший API-лимита, рекурсивно делится на четыре. `SCRAPER_GRID_STEP_DEGREES` задаёт начальный шаг, `SCRAPER_REQUEST_DELAY_MS` — паузу, а `SCRAPER_MAX_STATIONS_PER_RUN` — лимит одного API-ответа. Дубли удаляются по id, координатам и паре название+адрес. `SCRAPER_MODE=city` сохраняет прежний режим `SCRAPER_BOUNDS`.
@@ -135,7 +135,7 @@ pnpm scrape:benzin:debug -- --dry-run
 
 ## GitHub Actions: автообновление
 
-Workflow `.github/workflows/scrape.yml` запускает nationwide CLI-scraper каждый час на 7-й минуте. Смещение от начала часа уменьшает вероятность задержки GitHub scheduler, а часовой интервал оставляет запас для полного обхода и не создаёт постоянную нагрузку на публичный сайт. Vercel Function в длинном обходе не участвует; защищённый endpoint `GET /api/cron/scrape` остаётся для ручного регионального запуска.
+Workflow `.github/workflows/scrape.yml` запускает nationwide CLI-scraper каждый час на 7-й минуте в `SCRAPER_REPORTS_MODE=incremental`. Смещение от начала часа уменьшает вероятность задержки GitHub scheduler, а часовой интервал оставляет запас для полного обхода и не создаёт постоянную нагрузку на публичный сайт. Vercel Function в длинном обходе не участвует; защищённый endpoint `GET /api/cron/scrape` остаётся для ручного регионального запуска. Первичный `backfill` истории запускайте вручную с ограниченным `SCRAPER_MAX_REPORT_STATIONS`, пока необработанные станции не получат курсоры.
 
 Откройте GitHub Repository → Settings → Secrets and variables → Actions и добавьте:
 

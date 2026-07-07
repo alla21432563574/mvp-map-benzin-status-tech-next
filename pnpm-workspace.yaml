@@ -6,3 +6,6 @@ allowBuilds:
   esbuild: true
   sharp: false
   unrs-resolver: false
+
+overrides:
+  postcss: ^8.5.16
